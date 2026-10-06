@@ -73,7 +73,7 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
   /// Tipos de conector que se crean al arrastrar desde el "+" de un nodo.
   static const _connectors = <(String, IconData, ConnectorStyle)>[
     (
-      'Jerarquía (padre → hijo)',
+      'Jerarquía (padre e hijo)',
       Icons.account_tree_outlined,
       ConnectorStyle.hierarchy
     ),
