@@ -63,9 +63,11 @@ class EditOverlayPainter<T> extends CustomPainter {
     required this.nodeResize,
     required this.labelMinScale,
     required this.canResize,
+    Listenable? effects,
   }) : super(
           repaint: Listenable.merge([
             state,
+            if (effects != null) effects,
             controller.viewport,
             controller.geometry,
             controller.selection,
@@ -261,7 +263,7 @@ class EditOverlayPainter<T> extends CustomPainter {
       if (n == null || n.locked || !canResize(n)) return;
     }
     if (controller.isHidden(id)) return;
-    final rect = controller.rectOf(id);
+    final rect = renderer.rectOf(id);
     final half = EditHandles.cornerSize / 2 / s;
     for (final p in [
       rect.topLeft,

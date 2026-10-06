@@ -156,7 +156,8 @@ void main() {
     await tester.pumpWidget(_host(c, config: const NodeEditorConfig()));
     expect(find.byType(NodeEditorMinimap<void>), findsOneWidget);
     await tester.tap(find.byTooltip('Ajustar vista'));
-    await tester.pump();
+    // El botón usa una transición de cámara.
+    await tester.pumpAndSettle();
     expect(c.viewport.scale, lessThan(1));
   });
 

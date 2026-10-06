@@ -377,3 +377,18 @@ Path dashPath(Path source, List<double> pattern, {double phase = 0}) {
   }
   return out;
 }
+
+/// Primera fracción [t] (0‥1) de [source], medida a lo largo del trazo.
+Path trimPath(Path source, double t) {
+  if (t >= 1) return source;
+  final out = Path();
+  if (t <= 0) return out;
+  final metrics = source.computeMetrics().toList();
+  var remaining = metrics.fold<double>(0, (a, m) => a + m.length) * t;
+  for (final m in metrics) {
+    if (remaining <= 0) break;
+    out.addPath(m.extractPath(0, math.min(remaining, m.length)), Offset.zero);
+    remaining -= m.length;
+  }
+  return out;
+}

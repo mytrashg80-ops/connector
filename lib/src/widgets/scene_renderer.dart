@@ -8,6 +8,7 @@ import '../geometry/node_geometry.dart';
 import '../model/edge.dart';
 import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
+import 'effects.dart';
 
 class _CachedEdge {
   _CachedEdge(this.a, this.aSide, this.b, this.bSide, this.curve, this.via,
@@ -50,6 +51,9 @@ class SceneRenderer<T> {
   /// Enlace de jerarquía (id del hijo) que no se pinta.
   String? hiddenLinkId;
 
+  /// Animaciones en curso (desplazan nodos y dibujan/borran líneas).
+  EditorEffects? effects;
+
   final Map<String, _CachedEdge> _edgeCache = {};
   final Map<String, _CachedEdge> _hierarchyCache = {};
   final Map<String, TextPainter> _labelCache = {};
@@ -87,10 +91,45 @@ class SceneRenderer<T> {
 
   // ------------------------------------------------------------- geometría
 
+  /// Rectángulo del nodo tal y como se ve ahora (con su animación).
+  Rect rectOf(String id) {
+    final r = controller.rectOf(id);
+    final fx = effects;
+    if (fx == null || !fx.movesNode(id)) return r;
+    final s = fx.scaleOf(id);
+    return Rect.fromCenter(
+        center: r.center + fx.displacement(id),
+        width: r.width * s,
+        height: r.height * s);
+  }
+
+  /// Oculto (rama plegada) y sin animación de salida en curso.
+  bool _hidden(String id) =>
+      controller.isHidden(id) && !(effects?.isGhost(id) ?? false);
+
+  double _opacity(String id) => effects?.opacityOf(id) ?? 1;
+
+  /// Trayecto y aspecto actuales de una conexión (para desvanecerla al
+  /// borrarla). `null` si nunca se llegó a pintar.
+  (Path, Color, double)? edgeSnapshot(EdgeData e) {
+    final c = _edgeCache[e.id];
+    final t = _theme;
+    if (c == null || t == null) return null;
+    return (c.geometry.path, e.color ?? t.edgeColor, e.width ?? t.edgeWidth);
+  }
+
+  /// Igual que [edgeSnapshot] para el enlace de jerarquía de [childId].
+  (Path, Color, double)? linkSnapshot(String childId) {
+    final c = _hierarchyCache[childId];
+    final t = _theme;
+    if (c == null || t == null || !showHierarchyLinks) return null;
+    return (c.geometry.path, t.hierarchyEdgeColor, t.hierarchyEdgeWidth);
+  }
+
   /// Punto de referencia de los puntos de paso: el medio entre los centros
   /// de ambos nodos.
   Offset referenceBetween(String a, String b) =>
-      (controller.rectOf(a).center + controller.rectOf(b).center) / 2;
+      (rectOf(a).center + rectOf(b).center) / 2;
 
   /// Punto de paso (en el mundo) de una conexión doblada por el usuario.
   Offset? viaOf(EdgeData e) {
@@ -101,7 +140,7 @@ class SceneRenderer<T> {
 
   /// Rectángulo que contiene seguro la conexión (descarte barato).
   Rect _roughBox(String a, String b, Offset? via) {
-    var box = controller.rectOf(a).expandToInclude(controller.rectOf(b));
+    var box = rectOf(a).expandToInclude(rectOf(b));
     if (via != null) {
       box = box.expandToInclude(Rect.fromCircle(center: via, radius: 1));
     }
@@ -115,7 +154,7 @@ class SceneRenderer<T> {
     final portId = source ? e.sourcePortId : e.targetPortId;
     final n = controller.node(nodeId);
     if (n == null) return null;
-    final rect = controller.rectOf(nodeId);
+    final rect = rectOf(nodeId);
     if (portId != null) {
       final port = n.port(portId);
       if (port != null) {
@@ -125,7 +164,7 @@ class SceneRenderer<T> {
       }
     }
     // Sin puerto: el lado que mira al otro nodo (o al punto de paso).
-    final toward = viaOf(e) ?? controller.rectOf(otherId).center;
+    final toward = viaOf(e) ?? rectOf(otherId).center;
     return NodeGeometry.floatingAnchor(rect, toward);
   }
 
@@ -170,17 +209,14 @@ class SceneRenderer<T> {
   bool hasVisibleLink(String childId) {
     if (!showHierarchyLinks) return false;
     final pid = controller.node(childId)?.parentId;
-    return pid != null &&
-        controller.node(pid) != null &&
-        !controller.isHidden(childId);
+    return pid != null && controller.node(pid) != null && !_hidden(childId);
   }
 
   /// Geometría del enlace de jerarquía de [childId] (va del padre al hijo).
   EdgeGeometry? linkGeometryOf(String childId, {bool straight = false}) {
     if (!hasVisibleLink(childId)) return null;
     final pid = controller.node(childId)!.parentId!;
-    return _hierarchyGeometry(
-        childId, controller.rectOf(pid), controller.rectOf(childId),
+    return _hierarchyGeometry(childId, rectOf(pid), rectOf(childId),
         via: straight ? null : linkViaOf(childId), cache: !straight);
   }
 
@@ -188,8 +224,8 @@ class SceneRenderer<T> {
   ((Offset, PortSide), (Offset, PortSide))? linkEnds(String childId) {
     final pid = controller.node(childId)?.parentId;
     if (pid == null || controller.node(pid) == null) return null;
-    final (a, aSide, b, bSide) = _linkAnchors(
-        controller.rectOf(pid), controller.rectOf(childId), linkViaOf(childId));
+    final (a, aSide, b, bSide) =
+        _linkAnchors(rectOf(pid), rectOf(childId), linkViaOf(childId));
     return ((a, aSide), (b, bSide));
   }
 
@@ -244,8 +280,8 @@ class SceneRenderer<T> {
     var bestD = tolerance;
     for (final e in controller.edges) {
       if (e.id == hiddenEdgeId ||
-          controller.isHidden(e.sourceNodeId) ||
-          controller.isHidden(e.targetNodeId)) {
+          _hidden(e.sourceNodeId) ||
+          _hidden(e.targetNodeId)) {
         continue;
       }
       // Descarte barato (sin calcular la curva) para conexiones lejanas.
@@ -271,7 +307,7 @@ class SceneRenderer<T> {
     for (final n in controller.nodes) {
       final pid = n.parentId;
       if (pid == null || n.id == hiddenLinkId) continue;
-      if (controller.node(pid) == null || controller.isHidden(n.id)) continue;
+      if (controller.node(pid) == null || _hidden(n.id)) continue;
       final box = _roughBox(pid, n.id, linkViaOf(n.id)).inflate(tolerance);
       if (!box.contains(world)) continue;
       final g = linkGeometryOf(n.id);
@@ -306,6 +342,7 @@ class SceneRenderer<T> {
     double dashPhase = 0,
   }) {
     _purgeCaches();
+    if (!lod) _paintGhostLines(canvas);
     if (showHierarchyLinks) _paintHierarchy(canvas, region, lod);
     _paintEdges(canvas, region, scale, lod, dashPhase);
     if (lod) _paintLodNodes(canvas, region);
@@ -321,9 +358,9 @@ class SceneRenderer<T> {
       final pid = n.parentId;
       if (pid == null || n.id == hiddenLinkId) continue;
       if (controller.node(pid) == null) continue;
-      if (controller.isHidden(n.id)) continue;
-      final pr = controller.rectOf(pid);
-      final cr = controller.rectOf(n.id);
+      if (_hidden(n.id)) continue;
+      final pr = rectOf(pid);
+      final cr = rectOf(n.id);
       final via = linkViaOf(n.id);
       var box = pr.expandToInclude(cr);
       if (via != null) {
@@ -341,6 +378,19 @@ class SceneRenderer<T> {
         _stroke.color = t.hierarchyEdgeColor;
       }
       _stroke.strokeWidth = selected ? baseWidth * 1.5 : baseWidth;
+      final base = _stroke.color;
+      if (effects != null && !lod) {
+        final a = math.min(_opacity(pid), _opacity(n.id));
+        if (a < 1) _stroke.color = base.withValues(alpha: base.a * a);
+        final p = effects!.linkProgress(n.id);
+        if (p != null) {
+          final part = trimPath(g.path, p);
+          canvas.drawPath(
+              t.hierarchyEdgeDashed ? dashPath(part, t.edgeDashPattern) : part,
+              _stroke);
+          continue;
+        }
+      }
       if (t.hierarchyEdgeDashed && !lod) {
         final c = _hierarchyCache[n.id]!;
         canvas.drawPath(
@@ -359,8 +409,8 @@ class SceneRenderer<T> {
     final labels = <(EdgeData, EdgeGeometry, Color)>[];
     for (final e in controller.edges) {
       if (e.id == hiddenEdgeId ||
-          controller.isHidden(e.sourceNodeId) ||
-          controller.isHidden(e.targetNodeId)) {
+          _hidden(e.sourceNodeId) ||
+          _hidden(e.targetNodeId)) {
         continue;
       }
       // Descarte barato antes de calcular la curva.
@@ -385,6 +435,22 @@ class SceneRenderer<T> {
         ..strokeWidth = width;
 
       final dashed = e.dashed ?? t.edgeDashed;
+      final fx = lod ? null : effects;
+      if (fx != null) {
+        final a = math.min(_opacity(e.sourceNodeId), _opacity(e.targetNodeId));
+        if (a < 1) _stroke.color = color.withValues(alpha: color.a * a);
+        final p = fx.edgeProgress(e.id);
+        if (p != null) {
+          // Aparece: la línea se dibuja desde el origen.
+          final part = trimPath(g.path, p);
+          canvas.drawPath(
+              dashed || e.animated
+                  ? dashPath(part, t.edgeDashPattern, phase: -phase)
+                  : part,
+              _stroke);
+          continue;
+        }
+      }
       if (lod) {
         canvas.drawPath(g.path, _stroke);
       } else if (e.animated) {
@@ -399,7 +465,7 @@ class SceneRenderer<T> {
       }
 
       if (!lod && (e.arrow ?? t.edgeArrow)) {
-        _paintArrow(canvas, g, color, t.edgeArrowSize);
+        _paintArrow(canvas, g, _stroke.color, t.edgeArrowSize);
       }
       if (showLabels && e.label != null && e.label!.isNotEmpty) {
         labels.add((e, g, color));
@@ -408,6 +474,17 @@ class SceneRenderer<T> {
     // Las etiquetas van por encima de todas las líneas.
     for (final (e, g, color) in labels) {
       _paintLabel(canvas, e, g, color);
+    }
+  }
+
+  void _paintGhostLines(Canvas canvas) {
+    final fx = effects;
+    if (fx == null || fx.ghostLines.isEmpty) return;
+    for (final l in fx.ghostLines) {
+      _stroke
+        ..color = l.color.withValues(alpha: l.color.a * l.opacity)
+        ..strokeWidth = l.width;
+      canvas.drawPath(l.path, _stroke);
     }
   }
 
@@ -458,9 +535,9 @@ class SceneRenderer<T> {
     final radius = Radius.circular(math.max(t.nodeRadius, 6));
     _stroke.strokeWidth = math.max(2, t.nodeBorderWidth * 2);
     for (final id in ids) {
-      if (controller.isHidden(id)) continue;
+      if (_hidden(id)) continue;
       final n = controller.node(id)!;
-      final rect = controller.rectOf(id);
+      final rect = rectOf(id);
       final rr = RRect.fromRectAndRadius(rect, radius);
       final accent = t.accentFor(n.type, n.color);
       _fill.color = t.nodeTypes[n.type]?.backgroundColor ?? t.nodeColor;

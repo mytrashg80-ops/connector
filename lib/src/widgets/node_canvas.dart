@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
 import '../controller/node_editor_controller.dart';
+import 'effects.dart';
 import 'scene_renderer.dart';
 
 /// Datos de layout de cada hijo del lienzo.
@@ -49,6 +50,7 @@ class NodeCanvas<T> extends MultiChildRenderObjectWidget {
     required this.lodScale,
     required this.cullMargin,
     required this.sceneVersion,
+    this.effects,
     super.children,
   });
 
@@ -62,6 +64,9 @@ class NodeCanvas<T> extends MultiChildRenderObjectWidget {
   /// escena.
   final Object sceneVersion;
 
+  /// Animaciones en curso (desplazan nodos y repintan la escena).
+  final EditorEffects? effects;
+
   @override
   RenderNodeCanvas<T> createRenderObject(BuildContext context) =>
       RenderNodeCanvas<T>(
@@ -70,6 +75,7 @@ class NodeCanvas<T> extends MultiChildRenderObjectWidget {
         dashPhase: dashPhase,
         lodScale: lodScale,
         cullMargin: cullMargin,
+        effects: effects,
       );
 
   @override
@@ -83,6 +89,7 @@ class NodeCanvas<T> extends MultiChildRenderObjectWidget {
       ..dashPhase = dashPhase
       ..lodScale = lodScale
       ..cullMargin = cullMargin
+      ..effects = effects
       .._sceneVersion = sceneVersion;
     if (sceneChanged) ro.invalidateScene();
   }
@@ -140,9 +147,25 @@ class RenderNodeCanvas<T> extends RenderBox
     required ValueListenable<double> dashPhase,
     required this.lodScale,
     required this.cullMargin,
+    EditorEffects? effects,
   })  : _controller = controller,
         _renderer = renderer,
-        _dashPhase = dashPhase;
+        _dashPhase = dashPhase,
+        _effects = effects;
+
+  EditorEffects? _effects;
+  set effects(EditorEffects? value) {
+    if (identical(value, _effects)) return;
+    if (attached) _effects?.removeListener(_onEffects);
+    _effects = value;
+    if (attached) _effects?.addListener(_onEffects);
+    _onEffects();
+  }
+
+  void _onEffects() {
+    markNeedsLayout();
+    _scene?.markNeedsPaint();
+  }
 
   NodeEditorController<T> _controller;
   SceneRenderer<T> _renderer;
@@ -192,6 +215,7 @@ class RenderNodeCanvas<T> extends RenderBox
     _controller.structure.addListener(invalidateScene);
     _controller.viewport.addListener(_onViewport);
     _dashPhase.addListener(_onDash);
+    _effects?.addListener(_onEffects);
   }
 
   void _unlisten() {
@@ -201,6 +225,7 @@ class RenderNodeCanvas<T> extends RenderBox
     _controller.structure.removeListener(invalidateScene);
     _controller.viewport.removeListener(_onViewport);
     _dashPhase.removeListener(_onDash);
+    _effects?.removeListener(_onEffects);
   }
 
   @override
@@ -274,6 +299,7 @@ class RenderNodeCanvas<T> extends RenderBox
     vp.size = size;
     var child = firstChild;
     var measuredChanged = false;
+    final fx = _effects;
     while (child != null) {
       final pd = child.parentData! as NodeCanvasParentData;
       final id = pd.nodeId;
@@ -282,7 +308,20 @@ class RenderNodeCanvas<T> extends RenderBox
         pd.offset = Offset.zero;
       } else {
         final node = _controller.node(id);
-        if (node == null) {
+        final shift = fx?.displacement(id) ?? Offset.zero;
+        final ghost = node == null ? fx?.deletedGhost(id) : null;
+        if (ghost != null) {
+          // Nodo borrado que aún se desvanece: mismas restricciones que
+          // tenía.
+          final (at, size, auto) = ghost;
+          child.layout(auto
+              ? BoxConstraints(
+                  minWidth: size.width,
+                  minHeight: size.height,
+                  maxWidth: math.max(size.width, 480))
+              : BoxConstraints.tight(size));
+          pd.offset = at + shift;
+        } else if (node == null) {
           child.layout(BoxConstraints.tight(Size.zero));
         } else if (node.autoSize) {
           child.layout(
@@ -296,10 +335,10 @@ class RenderNodeCanvas<T> extends RenderBox
           if (_controller.reportMeasuredSize(id, child.size)) {
             measuredChanged = true;
           }
-          pd.offset = node.position;
+          pd.offset = node.position + shift;
         } else {
           child.layout(BoxConstraints.tight(node.size));
-          pd.offset = node.position;
+          pd.offset = node.position + shift;
         }
       }
       child = pd.nextSibling;

@@ -55,6 +55,7 @@ class NodeEditorConfig {
     this.enableEdgeEditing = true,
     this.enableAlignmentGuides = true,
     this.alignmentSnapDistance = 6,
+    this.animations = const NodeEditorAnimations(),
   });
 
   /// Sólo permite navegar y seleccionar.
@@ -124,6 +125,11 @@ class NodeEditorConfig {
   /// Distancia (en píxeles de pantalla) a la que una guía atrae al nodo.
   final double alignmentSnapDistance;
 
+  /// Animaciones de la interfaz (aparecer, borrar, arrastrar, deshacer,
+  /// plegar ramas, cámara…). Usa [NodeEditorAnimations.none] para
+  /// desactivarlas todas.
+  final NodeEditorAnimations animations;
+
   NodeEditorConfig copyWith({
     bool? readOnly,
     bool? showGrid,
@@ -151,6 +157,7 @@ class NodeEditorConfig {
     bool? enableEdgeEditing,
     bool? enableAlignmentGuides,
     double? alignmentSnapDistance,
+    NodeEditorAnimations? animations,
   }) {
     return NodeEditorConfig(
       readOnly: readOnly ?? this.readOnly,
@@ -182,8 +189,174 @@ class NodeEditorConfig {
           enableAlignmentGuides ?? this.enableAlignmentGuides,
       alignmentSnapDistance:
           alignmentSnapDistance ?? this.alignmentSnapDistance,
+      animations: animations ?? this.animations,
     );
   }
+}
+
+/// Qué animaciones usa el editor y cómo.
+///
+/// Las animaciones son sólo visuales: el modelo (posiciones, nodos,
+/// conexiones, historial, JSON) cambia al instante y la animación muestra la
+/// transición encima. Si el sistema pide reducir el movimiento
+/// (`MediaQuery.disableAnimations`) se desactivan solas, salvo que
+/// [respectReduceMotion] sea `false`.
+///
+/// ```dart
+/// NodeEditor(
+///   controller: controller,
+///   config: const NodeEditorConfig(
+///     animations: NodeEditorAnimations(nodeExit: false),
+///     // o NodeEditorAnimations.none para ninguna
+///   ),
+/// )
+/// ```
+@immutable
+class NodeEditorAnimations {
+  const NodeEditorAnimations({
+    this.enabled = true,
+    this.duration = const Duration(milliseconds: 260),
+    this.curve = Curves.easeOutCubic,
+    this.nodeEnter = true,
+    this.nodeExit = true,
+    this.dragLift = true,
+    this.liftScale = 1.04,
+    this.moveTransitions = true,
+    this.collapse = true,
+    this.edgeEnter = true,
+    this.edgeExit = true,
+    this.camera = true,
+    this.cameraDuration = const Duration(milliseconds: 380),
+    this.maxAnimatedNodes = 250,
+    this.respectReduceMotion = true,
+  });
+
+  /// Sin ninguna animación.
+  static const none = NodeEditorAnimations(enabled: false);
+
+  /// Interruptor general.
+  final bool enabled;
+
+  /// Duración de las animaciones de nodos y conexiones.
+  final Duration duration;
+
+  /// Curva de los desplazamientos (deshacer, auto-organizar, plegar…).
+  final Curve curve;
+
+  /// Los nodos nuevos aparecen creciendo (al crearlos, pegarlos, duplicarlos
+  /// o al deshacer un borrado).
+  final bool nodeEnter;
+
+  /// Los nodos borrados se encogen y se desvanecen.
+  final bool nodeExit;
+
+  /// Al arrastrar, los nodos se "levantan" (crecen un poco y proyectan
+  /// sombra) y al soltarlos se asientan con un pequeño rebote.
+  final bool dragLift;
+
+  /// Escala de los nodos levantados.
+  final double liftScale;
+
+  /// Los nodos se deslizan a su nueva posición cuando ésta cambia fuera de
+  /// un arrastre: deshacer/rehacer, auto-organizar, flechas del teclado o
+  /// cambios hechos por API.
+  final bool moveTransitions;
+
+  /// Al plegar una rama sus nodos se recogen hacia el padre; al desplegarla
+  /// salen de él.
+  final bool collapse;
+
+  /// Las conexiones y enlaces nuevos se dibujan desde el origen.
+  final bool edgeEnter;
+
+  /// Las conexiones y enlaces eliminados se desvanecen.
+  final bool edgeExit;
+
+  /// Transiciones suaves de cámara al ajustar la vista o hacer zoom con los
+  /// botones y el teclado (`fitView(animate: true)` y similares).
+  final bool camera;
+  final Duration cameraDuration;
+
+  /// Si un cambio afecta a más nodos que esto, se aplica sin animar (p. ej.
+  /// al cargar un documento entero).
+  final int maxAnimatedNodes;
+
+  /// Desactiva las animaciones si el sistema pide reducir el movimiento.
+  final bool respectReduceMotion;
+
+  NodeEditorAnimations copyWith({
+    bool? enabled,
+    Duration? duration,
+    Curve? curve,
+    bool? nodeEnter,
+    bool? nodeExit,
+    bool? dragLift,
+    double? liftScale,
+    bool? moveTransitions,
+    bool? collapse,
+    bool? edgeEnter,
+    bool? edgeExit,
+    bool? camera,
+    Duration? cameraDuration,
+    int? maxAnimatedNodes,
+    bool? respectReduceMotion,
+  }) {
+    return NodeEditorAnimations(
+      enabled: enabled ?? this.enabled,
+      duration: duration ?? this.duration,
+      curve: curve ?? this.curve,
+      nodeEnter: nodeEnter ?? this.nodeEnter,
+      nodeExit: nodeExit ?? this.nodeExit,
+      dragLift: dragLift ?? this.dragLift,
+      liftScale: liftScale ?? this.liftScale,
+      moveTransitions: moveTransitions ?? this.moveTransitions,
+      collapse: collapse ?? this.collapse,
+      edgeEnter: edgeEnter ?? this.edgeEnter,
+      edgeExit: edgeExit ?? this.edgeExit,
+      camera: camera ?? this.camera,
+      cameraDuration: cameraDuration ?? this.cameraDuration,
+      maxAnimatedNodes: maxAnimatedNodes ?? this.maxAnimatedNodes,
+      respectReduceMotion: respectReduceMotion ?? this.respectReduceMotion,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is NodeEditorAnimations &&
+      other.enabled == enabled &&
+      other.duration == duration &&
+      other.curve == curve &&
+      other.nodeEnter == nodeEnter &&
+      other.nodeExit == nodeExit &&
+      other.dragLift == dragLift &&
+      other.liftScale == liftScale &&
+      other.moveTransitions == moveTransitions &&
+      other.collapse == collapse &&
+      other.edgeEnter == edgeEnter &&
+      other.edgeExit == edgeExit &&
+      other.camera == camera &&
+      other.cameraDuration == cameraDuration &&
+      other.maxAnimatedNodes == maxAnimatedNodes &&
+      other.respectReduceMotion == respectReduceMotion;
+
+  @override
+  int get hashCode => Object.hash(
+        enabled,
+        duration,
+        curve,
+        nodeEnter,
+        nodeExit,
+        dragLift,
+        liftScale,
+        moveTransitions,
+        collapse,
+        edgeEnter,
+        edgeExit,
+        camera,
+        cameraDuration,
+        maxAnimatedNodes,
+        respectReduceMotion,
+      );
 }
 
 /// Estado visual de un nodo que recibe el `nodeBuilder`.

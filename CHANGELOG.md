@@ -1,3 +1,24 @@
+## 0.4.0
+
+- **Animaciones opcionales** (`NodeEditorConfig.animations`,
+  `NodeEditorAnimations`, `NodeEditorAnimations.none`):
+  - nodos que aparecen creciendo y desaparecen encogiéndose;
+  - al arrastrar, los nodos se levantan con sombra y al soltarlos se asientan
+    con un rebote;
+  - los nodos se deslizan cuando su posición cambia fuera de un arrastre
+    (deshacer/rehacer, auto-organizar, teclado, API);
+  - plegar y desplegar ramas recoge y saca los hijos del padre;
+  - las conexiones y enlaces nuevos se dibujan y los borrados se desvanecen;
+  - transiciones de cámara: `fitView(animate:)`, `centerOnNode(animate:)`,
+    `NodeViewport.zoomBy(animate:)`, `centerOn(animate:)`,
+    `fitRect(animate:)`, `animateTo`, `isAnimating` y `stopAnimation`.
+    Los botones de zoom y ajustar y los atajos de teclado las usan.
+- Las animaciones son sólo visuales (el modelo cambia al instante), respetan
+  "reducir movimiento" del sistema y no cuestan nada en reposo.
+- `NodeEditorController.isAnimatingLayout`. `applyLayout(fitAfter: true)`
+  encuadra con una transición de cámara.
+- Ejemplo: botón "Animaciones" para activarlas o desactivarlas.
+
 ## 0.3.0
 
 - **Enlaces de jerarquía editables:** las líneas padre → hijo se resaltan,

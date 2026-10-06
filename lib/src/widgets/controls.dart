@@ -41,11 +41,14 @@ class NodeEditorControls<T> extends StatelessWidget {
 
     final children = <Widget>[
       if (showZoom) ...[
-        button(Icons.add, 'Acercar', () => c.viewport.zoomBy(zoomStep)),
-        button(Icons.remove, 'Alejar', () => c.viewport.zoomBy(1 / zoomStep)),
+        button(Icons.add, 'Acercar',
+            () => c.viewport.zoomBy(zoomStep, animate: true)),
+        button(Icons.remove, 'Alejar',
+            () => c.viewport.zoomBy(1 / zoomStep, animate: true)),
       ],
       if (showFit)
-        button(Icons.fit_screen_outlined, 'Ajustar vista', () => c.fitView()),
+        button(Icons.fit_screen_outlined, 'Ajustar vista',
+            () => c.fitView(animate: true)),
       if (showHistory)
         ValueListenableBuilder<int>(
           valueListenable: c.history,

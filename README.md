@@ -29,6 +29,7 @@ dependencias aparte de Flutter.
 | **Editar conexiones** | Conexiones y enlaces de jerarquía se seleccionan igual: resaltado al pasar el ratón, arrastrar un extremo para reconectar (o soltarlo en el vacío para desconectar), botón × en la línea seleccionada, Alt + clic en un puerto para romper sus conexiones |
 | **Trazado** | Arrastra cualquier línea para que pase por otro sitio (p. ej. para sacarla de debajo de un nodo). El punto de paso acompaña a los nodos al moverlos; llévala de vuelta a su sitio para enderezarla |
 | **Guías de alineación** | Al arrastrar o redimensionar, los bordes y centros se alinean con los de los nodos visibles y se dibujan guías. Ctrl/⌘ lo desactiva mientras se mantiene |
+| **Animaciones** | Opcionales y configurables: los nodos aparecen creciendo y desaparecen encogiéndose, se "levantan" con sombra al arrastrarlos y se asientan con un rebote al soltarlos, se deslizan al deshacer o auto-organizar, las ramas se recogen hacia su padre al plegarse, las líneas nuevas se dibujan y las borradas se desvanecen, y la cámara se desliza al ajustar la vista o hacer zoom |
 | **Tamaño** | Redimensionar arrastrando los bordes (ratón) o las esquinas del nodo seleccionado (táctil), con tamaño mínimo e imán a la rejilla |
 | **Jerarquía** | `parentId` con detección de ciclos, colapsar/expandir subárboles, arrastrar un padre mueve su subárbol, **Alt + soltar** sobre otro nodo para asignarle padre |
 | **Interacción** | Todo se ve en tiempo real mientras arrastras. Pan, zoom con rueda, pinza y trackpad, selección múltiple (Shift/Ctrl, rectángulo con Shift+arrastrar), imán a la rejilla, menús contextuales (clic derecho o pulsación larga), cursores según lo que hay debajo |
@@ -199,7 +200,7 @@ final temaOscuro = NodeEditorTheme.dark(
 `lodScale`, `labelMinScale`, `cullMargin`, `showHierarchyLinks`,
 `hierarchyAxis`, `enableKeyboardShortcuts`, `marqueeOnEmptyDrag`,
 `enableNodeResize`, `minNodeSize`, `enableEdgeEditing`,
-`enableAlignmentGuides`, `alignmentSnapDistance`...
+`enableAlignmentGuides`, `alignmentSnapDistance`, `animations`...
 
 Callbacks del widget: `onNodeTap`, `onNodeDoubleTap`, `onNodeContextMenu`,
 `onEdgeTap`, `onEdgeContextMenu`, `onCanvasTap`, `onCanvasContextMenu`,
@@ -216,6 +217,46 @@ pulsar × / Supr lo rompe. Cada cambio llega por `onParentChanged` (con
 
 `AlignmentSnapper` (exportado) es el motor de las guías por si quieres usarlo
 en tus propias herramientas.
+
+### Animaciones
+
+Todas son opcionales. Se configuran con `NodeEditorConfig.animations`:
+
+```dart
+NodeEditor(
+  controller: controller,
+  config: NodeEditorConfig(
+    // Todas activadas (por defecto):
+    animations: const NodeEditorAnimations(),
+    // Ninguna:
+    // animations: NodeEditorAnimations.none,
+    // A tu gusto:
+    // animations: const NodeEditorAnimations(
+    //   duration: Duration(milliseconds: 400),
+    //   nodeExit: false,
+    //   dragLift: false,
+    // ),
+  ),
+)
+```
+
+| Opción | Qué anima |
+|---|---|
+| `enabled` | Interruptor general |
+| `nodeEnter` | Nodos nuevos (crear, pegar, duplicar, deshacer un borrado): aparecen creciendo |
+| `nodeExit` | Nodos borrados: se encogen y se desvanecen donde estaban |
+| `dragLift`, `liftScale` | Al arrastrar, los nodos se levantan con sombra; al soltar se asientan con un pequeño rebote |
+| `moveTransitions` | Cambios de posición fuera de un arrastre (deshacer/rehacer, auto-organizar, flechas, API): los nodos se deslizan |
+| `collapse` | Plegar una rama la recoge hacia el padre; desplegarla la saca de él |
+| `edgeEnter`, `edgeExit` | Las conexiones y enlaces nuevos se dibujan desde el origen; los borrados se desvanecen |
+| `camera`, `cameraDuration` | Ajustar la vista y el zoom desde los botones o el teclado. Por API: `fitView(animate: true)`, `centerOnNode(id, animate: true)`, `viewport.zoomBy(f, animate: true)` o `viewport.animateTo(...)` |
+| `duration`, `curve` | Duración y curva generales |
+| `maxAnimatedNodes` | Si un cambio afecta a más nodos (cargar un documento entero), se aplica sin animar |
+| `respectReduceMotion` | Si el sistema pide reducir el movimiento, se desactivan solas |
+
+Son sólo visuales: el controlador, el historial, el JSON y los callbacks
+cambian al instante, igual que sin animaciones, así que tu lógica no tiene que
+esperar a nada.
 
 Para soltar elementos desde tu propia paleta usa un `DragTarget` y
 `GlobalKey<NodeEditorState<T>>().currentState!.globalToWorld(offset)`. Con
@@ -280,6 +321,13 @@ recursos:
    (unas pocas comparaciones por nodo) y no reconstruye nada: las guías se
    pintan en la capa de ayudas. Doblar una línea tampoco reconstruye el
    editor, sólo repinta la capa de conexiones.
+10. **Animaciones sin reconstruir.** Un único ticker mueve todas las
+    animaciones y se detiene en cuanto terminan. No reconstruyen widgets: cada
+    nodo animado sólo cambia su capa (opacidad, escala, posición) y la escena
+    de conexiones se repinta. Sólo se animan los nodos que se ven, con un
+    límite (`maxAnimatedNodes`) para que cargar un documento grande no cueste
+    nada. Con `NodeEditorAnimations.none` ni siquiera se añade la capa por
+    nodo.
 
 ## Tests
 

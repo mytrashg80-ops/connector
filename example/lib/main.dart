@@ -67,6 +67,7 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
 
   int _scenario = 0;
   bool _snap = false;
+  bool _animate = true;
 
   Scenario get scenario => scenarios[_scenario];
 
@@ -100,7 +101,7 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
       await controller.applyLayout(scenarios[index].layout);
       controller
         ..clearHistory()
-        ..fitView();
+        ..fitView(animate: true);
     });
   }
 
@@ -414,6 +415,9 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
           snapToGrid: _snap,
           hierarchyAxis: scenario.hierarchyAxis,
           showMinimap: wide,
+          animations: _animate
+              ? const NodeEditorAnimations()
+              : NodeEditorAnimations.none,
         ),
         nodeBuilder: buildNodeCard,
         onNodeDoubleTap: _rename,
@@ -520,6 +524,16 @@ class _TopBar extends StatelessWidget {
             active: page._snap,
             // ignore: invalid_use_of_protected_member
             onTap: () => page.setState(() => page._snap = !page._snap),
+          ),
+          _BarButton(
+            icon: page._animate
+                ? Icons.animation
+                : Icons.motion_photos_off_outlined,
+            label: 'Animaciones',
+            theme: t,
+            active: page._animate,
+            // ignore: invalid_use_of_protected_member
+            onTap: () => page.setState(() => page._animate = !page._animate),
           ),
           _BarButton(
             icon: Icons.data_object,

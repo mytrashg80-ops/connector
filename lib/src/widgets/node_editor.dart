@@ -18,6 +18,7 @@ import 'controls.dart';
 import 'alignment_guides.dart';
 import 'default_node.dart';
 import 'edit_overlay.dart';
+import 'effects.dart';
 import 'editor_config.dart';
 import 'minimap.dart';
 import 'node_canvas.dart';
@@ -200,6 +201,16 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   final InteractionState _interaction = InteractionState();
   final ValueNotifier<double> _dashPhase = ValueNotifier(0);
   late final Ticker _ticker;
+  late final EditorEffects _fx;
+  // Animaciones activas (configuración + "reducir movimiento" del sistema).
+  bool _fxOn = false;
+  // Último estado conocido del grafo, para detectar qué cambió y animarlo.
+  Map<String, NodeData<T>>? _knownNodes;
+  Map<String, Offset> _knownPos = {};
+  Map<String, EdgeData>? _knownEdges;
+  bool _knownPosStale = true;
+  // Último widget de cada nodo que está saliendo.
+  final Map<String, Widget> _ghostWidgets = {};
   FocusNode? _ownFocus;
   FocusNode get _focus => widget.focusNode ?? (_ownFocus ??= FocusNode());
 
@@ -275,6 +286,13 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     _ticker = createTicker((elapsed) {
       _dashPhase.value = elapsed.inMicroseconds / 1e6 * 24;
     });
+    _fx = EditorEffects(this)
+      ..onGhostsChanged = () {
+        if (!mounted) return;
+        _ghostWidgets.removeWhere((id, _) => !_fx.isGhost(id));
+        setState(() {});
+      };
+    _renderer.effects = _fx;
     _attach(_c);
   }
 
@@ -283,7 +301,12 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.controller, widget.controller)) {
       _detach(oldWidget.controller);
-      _renderer = SceneRenderer<T>(widget.controller);
+      oldWidget.controller.viewport.configureAnimation(null, owner: this);
+      _cameraOn = false;
+      _fx.clear();
+      _ghostWidgets.clear();
+      _resetSnapshots();
+      _renderer = SceneRenderer<T>(widget.controller)..effects = _fx;
       _nodeCache.clear();
       _builtRegion = null;
       _attach(widget.controller);
@@ -306,20 +329,20 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   }
 
   void _attach(NodeEditorController<T> c) {
-    c.structure.addListener(_onStructure);
+    c.structure.addListener(_onGraphStructure);
     c.selection.addListener(_onStructure);
     c.edgesSignal.addListener(_onEdges);
-    c.geometry.addListener(_scheduleVisibilityCheck);
+    c.geometry.addListener(_onGeometry);
     c.viewport.addListener(_onViewport);
     c.locked.addListener(_onLocked);
     _syncTicker();
   }
 
   void _detach(NodeEditorController<T> c) {
-    c.structure.removeListener(_onStructure);
+    c.structure.removeListener(_onGraphStructure);
     c.selection.removeListener(_onStructure);
     c.edgesSignal.removeListener(_onEdges);
-    c.geometry.removeListener(_scheduleVisibilityCheck);
+    c.geometry.removeListener(_onGeometry);
     c.viewport.removeListener(_onViewport);
     c.locked.removeListener(_onLocked);
   }
@@ -327,6 +350,8 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   @override
   void dispose() {
     _detach(_c);
+    _c.viewport.configureAnimation(null, owner: this);
+    _fx.dispose();
     _ticker.dispose();
     _longPressTimer?.cancel();
     _interaction.dispose();
@@ -350,11 +375,244 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   }
 
   void _onEdges() {
+    _diffEdges();
     _syncTicker();
     // Doblar una línea no cambia qué puertos están conectados: la capa de
     // escena se repinta sola y no hace falta reconstruir el editor.
     if (_mode == _Mode.bend) return;
     if (mounted) setState(() {});
+  }
+
+  void _onGraphStructure() {
+    _diffStructure();
+    _onStructure();
+  }
+
+  void _onGeometry() {
+    _diffPositions();
+    _scheduleVisibilityCheck();
+  }
+
+  // ============================================================ animaciones
+
+  NodeEditorAnimations get _anim => widget.config.animations;
+  bool _cameraOn = false;
+
+  /// Recalcula si hay animaciones (depende de la configuración y de la
+  /// preferencia del sistema) y conecta las piezas que las usan.
+  void _syncAnimations(BuildContext context) {
+    final a = _anim;
+    final reduce = a.respectReduceMotion &&
+        (MediaQuery.maybeDisableAnimationsOf(context) ?? false);
+    final on = a.enabled && !reduce;
+    _fx.config = a;
+    if (on != _fxOn) {
+      _fxOn = on;
+      _nodeCache.clear();
+      if (on) {
+        _resetSnapshots();
+        _snapshot();
+      } else {
+        _fx.clear();
+        _ghostWidgets.clear();
+        _resetSnapshots();
+      }
+    }
+    final camera = on && a.camera;
+    if (camera) {
+      _c.viewport
+          .configureAnimation(this, owner: this, duration: a.cameraDuration);
+    } else if (_cameraOn) {
+      _c.viewport.configureAnimation(null, owner: this);
+    }
+    _cameraOn = camera;
+  }
+
+  void _resetSnapshots() {
+    _knownNodes = null;
+    _knownEdges = null;
+    _knownPos = {};
+    _knownPosStale = true;
+  }
+
+  void _snapshot() {
+    _knownNodes = {for (final n in _c.nodes) n.id: n};
+    _knownEdges = {for (final e in _c.edges) e.id: e};
+    _knownPos = {for (final n in _c.nodes) n.id: n.position};
+    _knownPosStale = false;
+  }
+
+  /// Zona en la que merece la pena animar (lo que se ve y un poco más).
+  Rect get _animArea {
+    final v = _c.viewport.visibleWorldRect;
+    return v.inflate(math.max(v.width, v.height) * 0.1);
+  }
+
+  /// Nodos creados, borrados, re-parentados o ramas plegadas.
+  void _diffStructure() {
+    if (!_fxOn) return;
+    final old = _knownNodes;
+    final now = {for (final n in _c.nodes) n.id: n};
+    _knownNodes = now;
+    if (old == null) return;
+    final a = _anim;
+    final area = _animArea;
+    final removed = [
+      for (final id in old.keys)
+        if (!now.containsKey(id)) id
+    ];
+    final added = [
+      for (final id in now.keys)
+        if (!old.containsKey(id)) id
+    ];
+    // Recarga completa (cargar un documento, cambiar de escenario…).
+    if (removed.length + added.length > a.maxAnimatedNodes) return;
+    final editingLine = _reconnect != null || _relink != null;
+
+    for (final id in removed) {
+      if (a.edgeExit && old[id]!.parentId != null && !editingLine) {
+        _ghostLink(id);
+      }
+      if (!a.nodeExit || !_visibleSet.contains(id)) continue;
+      final w = _nodeCache[id]?.widget;
+      if (w == null) continue;
+      _ghostWidgets[id] = w;
+      final n = old[id]!;
+      _fx.nodeExit(id, origin: n.position, size: n.size, autoSize: n.autoSize);
+    }
+    for (final id in added) {
+      if (a.nodeEnter && area.overlaps(_c.rectOf(id)) && !_c.isHidden(id)) {
+        _fx.nodeEnter(id);
+      }
+    }
+
+    var budget = a.maxAnimatedNodes;
+    for (final n in now.values) {
+      final before = old[n.id];
+      if (before == null || identical(before, n)) continue;
+      if (before.parentId != n.parentId) {
+        if (a.edgeExit && before.parentId != null && !editingLine) {
+          _ghostLink(n.id);
+        }
+        if (a.edgeEnter && n.parentId != null && !_c.isHidden(n.id)) {
+          _fx.linkEnter(n.id);
+        }
+      }
+      if (a.collapse && before.collapsed != n.collapsed && budget > 0) {
+        budget -= _animateCollapse(n.id, n.collapsed, area, budget);
+      }
+    }
+  }
+
+  /// Recoge (o despliega) los descendientes de [id] hacia (desde) él.
+  int _animateCollapse(String id, bool collapsed, Rect area, int budget) {
+    final anchor = _c.rectOf(id).center;
+    var count = 0;
+    for (final d in _c.descendantsOf(id)) {
+      if (count >= budget) break;
+      final r = _c.rectOf(d);
+      if (!area.overlaps(r)) continue;
+      final toAnchor = anchor - r.center;
+      if (collapsed) {
+        // Sólo los que se veían y ahora quedan ocultos.
+        if (!_visibleSet.contains(d) || !_c.isHidden(d)) continue;
+        final w = _nodeCache[d]?.widget;
+        if (w == null) continue;
+        _ghostWidgets[d] = w;
+        _fx.nodeExit(d, to: toAnchor, scaleTo: 0.3);
+      } else {
+        if (_c.isHidden(d)) continue;
+        _fx.nodeEnter(d, from: toAnchor, scaleFrom: 0.3);
+      }
+      count++;
+    }
+    return count;
+  }
+
+  void _ghostLink(String childId) {
+    final snap = _renderer.linkSnapshot(childId);
+    if (snap == null) return;
+    final (path, color, width) = snap;
+    _fx.addGhostLine(path, color, width);
+  }
+
+  /// Conexiones creadas o borradas.
+  void _diffEdges() {
+    if (!_fxOn || _mode == _Mode.bend) return;
+    final old = _knownEdges;
+    final now = {for (final e in _c.edges) e.id: e};
+    _knownEdges = now;
+    if (old == null) return;
+    final a = _anim;
+    final removed = [
+      for (final id in old.keys)
+        if (!now.containsKey(id)) id
+    ];
+    final added = [
+      for (final id in now.keys)
+        if (!old.containsKey(id)) id
+    ];
+    if (removed.length + added.length > a.maxAnimatedNodes) return;
+    if (a.edgeExit && _reconnect == null) {
+      final area = _animArea;
+      for (final id in removed) {
+        final snap = _renderer.edgeSnapshot(old[id]!);
+        if (snap == null) continue;
+        final (path, color, width) = snap;
+        if (path.getBounds().overlaps(area)) {
+          _fx.addGhostLine(path, color, width);
+        }
+      }
+    }
+    if (a.edgeEnter) {
+      final area = _animArea;
+      for (final id in added) {
+        final e = now[id]!;
+        if (area.overlaps(_c.rectOf(e.sourceNodeId)) ||
+            area.overlaps(_c.rectOf(e.targetNodeId))) {
+          _fx.edgeEnter(id);
+        }
+      }
+    }
+  }
+
+  /// Nodos que cambiaron de sitio fuera de un arrastre (deshacer, layout,
+  /// teclado, API): se deslizan desde donde estaban.
+  void _diffPositions() {
+    if (!_fxOn) return;
+    // Durante un gesto (o un layout ya animado) sólo anotamos que la foto
+    // quedó vieja; al terminar se renueva sin animar.
+    if (_mode != _Mode.none || _c.isAnimatingLayout) {
+      _knownPosStale = true;
+      return;
+    }
+    if (_knownPosStale) {
+      _knownPos = {for (final n in _c.nodes) n.id: n.position};
+      _knownPosStale = false;
+      return;
+    }
+    final a = _anim;
+    final jumps = <String, Offset>{};
+    var tooMany = false;
+    for (final n in _c.nodes) {
+      final before = _knownPos[n.id];
+      _knownPos[n.id] = n.position;
+      if (before == null || before == n.position || tooMany) continue;
+      jumps[n.id] = before - n.position;
+      if (jumps.length > a.maxAnimatedNodes) tooMany = true;
+    }
+    if (_knownPos.length > _c.nodeCount * 2 + 64) {
+      _knownPos.removeWhere((id, _) => !_c.containsNode(id));
+    }
+    if (!a.moveTransitions || tooMany || jumps.isEmpty) return;
+    final area = _animArea;
+    jumps.forEach((id, jump) {
+      if (_c.isHidden(id)) return;
+      final r = _c.rectOf(id);
+      if (area.overlaps(r) || area.overlaps(r.shift(jump))) {
+        _fx.glide(id, jump);
+      }
+    });
   }
 
   void _syncTicker() {
@@ -933,7 +1191,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     } else {
       if (!isDouble) _c.clearSelection();
       if (isDouble) {
-        if (widget.config.doubleTapToFit) _c.fitView();
+        if (widget.config.doubleTapToFit) _c.fitView(animate: true);
         widget.onCanvasDoubleTap?.call(world);
       } else {
         widget.onCanvasTap?.call(world);
@@ -1017,6 +1275,10 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     _snapper = _buildSnapper(ids);
     _openGroup();
     _cursor.value = SystemMouseCursors.grabbing;
+    if (_fxOn && _anim.dragLift) {
+      // Con muchos nodos sólo se levanta el que se agarró.
+      _fx.lift(ids.length <= 40 ? ids : [primary]);
+    }
   }
 
   /// Rectángulos contra los que alinear: nodos visibles (y algo más) que no
@@ -1537,6 +1799,12 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     _resize = null;
     _mode = _Mode.none;
     _dragIds = const {};
+    _fx.dropAll();
+    if (_fxOn && _knownPosStale) {
+      // Lo que se movió durante el gesto ya está en su sitio.
+      _knownPos = {for (final n in _c.nodes) n.id: n.position};
+      _knownPosStale = false;
+    }
     _connectNode = null;
     _connectPort = null;
     _connectTargetNode = null;
@@ -1664,18 +1932,18 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     }
     if (key == LogicalKeyboardKey.keyF && !cmd) {
       final sel = _c.selectedNodeIds;
-      _c.fitView(ids: sel.isEmpty ? null : sel);
+      _c.fitView(ids: sel.isEmpty ? null : sel, animate: true);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.equal ||
         key == LogicalKeyboardKey.add ||
         key == LogicalKeyboardKey.numpadAdd) {
-      _c.viewport.zoomBy(widget.config.zoomStep);
+      _c.viewport.zoomBy(widget.config.zoomStep, animate: true);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.minus ||
         key == LogicalKeyboardKey.numpadSubtract) {
-      _c.viewport.zoomBy(1 / widget.config.zoomStep);
+      _c.viewport.zoomBy(1 / widget.config.zoomStep, animate: true);
       return KeyEventResult.handled;
     }
     if (_readOnly) return KeyEventResult.ignored;
@@ -1741,13 +2009,16 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     final w = NodeSlot(
       key: ValueKey<String>(id),
       nodeId: id,
-      child: RepaintBoundary(
-        child: NodeFrame(
-          node: n,
-          state: state,
-          theme: _theme,
-          showPorts: widget.config.showPorts,
-          child: body,
+      child: _wrapEffect(
+        id,
+        RepaintBoundary(
+          child: NodeFrame(
+            node: n,
+            state: state,
+            theme: _theme,
+            showPorts: widget.config.showPorts,
+            child: body,
+          ),
         ),
       ),
     );
@@ -1755,8 +2026,22 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     return w;
   }
 
+  Widget _wrapEffect(String id, Widget child) {
+    if (!_fxOn) return child;
+    return NodeEffect(
+      nodeId: id,
+      effects: _fx,
+      radius: _theme.nodeRadius,
+      shadowColor: _theme.brightness == Brightness.dark
+          ? const Color(0x99000000)
+          : const Color(0x40000000),
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    _syncAnimations(context);
     final theme = widget.theme ?? NodeEditorTheme.of(context);
     if (!identical(theme, _renderer.currentTheme)) {
       _nodeCache.clear();
@@ -1814,8 +2099,14 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
                       lodScale: config.lodScale,
                       cullMargin: config.cullMargin,
                       sceneVersion: _sceneVersion,
+                      effects: _fxOn ? _fx : null,
                       children: [
                         const SceneLayer(),
+                        // Nodos que se están yendo (borrados o plegados).
+                        for (final e in _ghostWidgets.entries)
+                          if (!_visibleSet.contains(e.key) &&
+                              _fx.isGhost(e.key))
+                            e.value,
                         for (final id in _visible)
                           if (_c.containsNode(id)) _buildNode(context, id),
                       ],
@@ -1834,6 +2125,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
                         nodeResize: !_readOnly && config.enableNodeResize,
                         labelMinScale: config.labelMinScale,
                         canResize: _canResize,
+                        effects: _fxOn ? _fx : null,
                       ),
                     ),
                   ),

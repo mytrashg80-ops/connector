@@ -1010,7 +1010,7 @@ class NodeEditorController<T> extends ChangeNotifier {
     _layoutAnimation = null;
     if (vsync == null || duration == Duration.zero) {
       setNodePositions(target);
-      if (fitAfter) fitView();
+      if (fitAfter) fitView(animate: true);
       return;
     }
     final from = <String, Offset>{
@@ -1048,7 +1048,7 @@ class NodeEditorController<T> extends ChangeNotifier {
           if (n != null) _setNode(id, n.copyWith(position: a));
         }));
     setNodePositions(target);
-    if (fitAfter) fitView();
+    if (fitAfter) fitView(animate: true);
   }
 
   void _withoutRecording(void Function() fn) {
@@ -1064,7 +1064,14 @@ class NodeEditorController<T> extends ChangeNotifier {
   // ================================================================ viewport
 
   /// Ajusta la cámara para mostrar todos los nodos (o sólo [ids]).
-  void fitView({Iterable<String>? ids, double padding = 48, double? maxScale}) {
+  ///
+  /// Con [animate] la cámara se desliza hasta allí (si el editor tiene las
+  /// transiciones de cámara activadas).
+  void fitView(
+      {Iterable<String>? ids,
+      double padding = 48,
+      double? maxScale,
+      bool animate = false}) {
     Rect? b;
     for (final id in ids ?? _nodes.keys) {
       if (!_nodes.containsKey(id) || isHidden(id)) continue;
@@ -1072,13 +1079,17 @@ class NodeEditorController<T> extends ChangeNotifier {
       b = b == null ? r : b.expandToInclude(r);
     }
     if (b == null) return;
-    viewport.fitRect(b, padding: padding, maxScale: maxScale ?? 1.5);
+    viewport.fitRect(b,
+        padding: padding, maxScale: maxScale ?? 1.5, animate: animate);
   }
 
-  void centerOnNode(String id, {double? scale}) {
+  void centerOnNode(String id, {double? scale, bool animate = false}) {
     if (!_nodes.containsKey(id)) return;
-    viewport.centerOn(rectOf(id).center, scale: scale);
+    viewport.centerOn(rectOf(id).center, scale: scale, animate: animate);
   }
+
+  /// `true` mientras [applyLayout] anima una transición.
+  bool get isAnimatingLayout => _layoutAnimation != null;
 
   // =========================================================== serialización
 
