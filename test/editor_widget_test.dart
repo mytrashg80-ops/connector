@@ -1,4 +1,5 @@
 import 'package:connector/connector.dart';
+import 'package:connector/src/widgets/edit_overlay.dart';
 import 'package:connector/src/widgets/scene_renderer.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -368,6 +369,256 @@ void main() {
       await tester.tapAt(origin + c.viewport.toScreen(geo.labelPosition));
       await tester.pump();
       expect(c.edgeCount, 0);
+    });
+  });
+
+  group('enlaces de jerarquía', () {
+    late NodeEditorController<void> c;
+    late Offset origin;
+    final theme = NodeEditorTheme.light();
+    final changes = <(String, String?)>[];
+
+    NodeData<void> box(String id, Offset pos, [String? parent]) =>
+        NodeData<void>(
+            id: id,
+            position: pos,
+            size: const Size(160, 80),
+            title: 'Nodo $id',
+            parentId: parent);
+
+    Future<void> setUpEditor(WidgetTester tester) async {
+      changes.clear();
+      c = NodeEditorController<void>(nodes: [
+        box('p', const Offset(300, 40)),
+        box('h', const Offset(60, 360), 'p'),
+        box('q', const Offset(600, 40)),
+        box('r', const Offset(560, 400)),
+      ]);
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 800,
+            height: 600,
+            child: NodeEditor<void>(
+              controller: c,
+              theme: theme,
+              config: const NodeEditorConfig(
+                  showMinimap: false, showControls: false),
+              onParentChanged: (child, parent) => changes.add((child, parent)),
+            ),
+          ),
+        ),
+      ));
+      origin = tester.getTopLeft(find.byType(NodeEditor<void>));
+    }
+
+    SceneRenderer<void> renderer() => SceneRenderer<void>(c)..theme = theme;
+    Offset screen(Offset world) => origin + c.viewport.toScreen(world);
+    Offset nodeCenter(String id) => screen(c.rectOf(id).center);
+
+    testWidgets('se seleccionan con un clic y Supr los rompe', (tester) async {
+      await setUpEditor(tester);
+      final mid = renderer().linkGeometryOf('h')!.labelPosition;
+      await tester.tapAt(screen(mid), kind: PointerDeviceKind.mouse);
+      await tester.pump();
+      expect(c.selectedLinkIds, {'h'});
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+      expect(c.node('h')!.parentId, isNull);
+      expect(changes, [('h', null)]);
+      c.undo();
+      expect(c.node('h')!.parentId, 'p');
+    });
+
+    testWidgets('el botón de borrar rompe el enlace seleccionado',
+        (tester) async {
+      await setUpEditor(tester);
+      c.selectLinks(['h']);
+      await tester.pump();
+      final g = renderer().linkGeometryOf('h')!;
+      await tester.tapAt(screen(
+          EditHandles.deleteButtonCenter(null, g, c.viewport.scale, true)));
+      await tester.pump();
+      expect(c.node('h')!.parentId, isNull);
+    });
+
+    testWidgets('arrastrar la línea cambia su trazado y vuelve recta',
+        (tester) async {
+      await setUpEditor(tester);
+      final plain = renderer().linkGeometryOf('h')!;
+      final g = await tester.startGesture(screen(plain.labelPosition),
+          kind: PointerDeviceKind.mouse);
+      await g.moveBy(const Offset(-40, 10));
+      await g.moveBy(const Offset(-60, 0));
+      await tester.pump();
+      final bent = c.node('h')!.linkBend;
+      expect(bent, isNotNull);
+      // La línea pasa por donde está el puntero.
+      final now = renderer().linkGeometryOf('h')!;
+      expect(now.distanceTo(plain.labelPosition + const Offset(-100, 10)),
+          lessThan(2));
+      await g.up();
+      await tester.pump();
+      c.undo();
+      expect(c.node('h')!.linkBend, isNull);
+      c.redo();
+      expect(c.node('h')!.linkBend, bent);
+
+      // Llevarla de vuelta a su sitio la endereza.
+      final g2 = await tester.startGesture(
+          screen(renderer().linkGeometryOf('h')!.labelPosition),
+          kind: PointerDeviceKind.mouse);
+      await g2.moveBy(const Offset(20, 0));
+      await g2.moveTo(screen(plain.labelPosition + const Offset(2, 1)));
+      await g2.up();
+      await tester.pump();
+      expect(c.node('h')!.linkBend, isNull);
+    });
+
+    testWidgets('arrastrar el extremo del padre a otro nodo cambia el padre',
+        (tester) async {
+      await setUpEditor(tester);
+      c.selectLinks(['h']);
+      await tester.pump();
+      final start = renderer().linkGeometryOf('h')!.polyline.first;
+      final g = await tester.startGesture(screen(start));
+      await g.moveBy(const Offset(20, 20));
+      await g.moveTo(nodeCenter('q'));
+      await g.up();
+      await tester.pump();
+      expect(c.node('h')!.parentId, 'q');
+      expect(changes, [('h', 'q')]);
+    });
+
+    testWidgets('arrastrar el extremo del hijo pasa el enlace a otro nodo',
+        (tester) async {
+      await setUpEditor(tester);
+      c.selectLinks(['h']);
+      await tester.pump();
+      final end = renderer().linkGeometryOf('h')!.polyline.last;
+      final g = await tester.startGesture(screen(end));
+      await g.moveBy(const Offset(20, -20));
+      await g.moveTo(nodeCenter('r'));
+      await g.up();
+      await tester.pump();
+      expect(c.node('h')!.parentId, isNull);
+      expect(c.node('r')!.parentId, 'p');
+    });
+
+    testWidgets('soltar el extremo en el vacío rompe el enlace',
+        (tester) async {
+      await setUpEditor(tester);
+      c.selectLinks(['h']);
+      await tester.pump();
+      final end = renderer().linkGeometryOf('h')!.polyline.last;
+      final g = await tester.startGesture(screen(end));
+      await g.moveBy(const Offset(20, -20));
+      await g.moveTo(origin + const Offset(400, 300));
+      await g.up();
+      await tester.pump();
+      expect(c.node('h')!.parentId, isNull);
+      expect(changes, [('h', null)]);
+    });
+  });
+
+  testWidgets('arrastrar una conexión la dobla por el puntero', (tester) async {
+    final c = NodeEditorController<void>(nodes: [
+      _n('a', const Offset(20, 100)),
+      _n('b', const Offset(420, 100)),
+    ]);
+    c.connect(
+        sourceNodeId: 'a',
+        sourcePortId: 'out',
+        targetNodeId: 'b',
+        targetPortId: 'in',
+        id: 'e');
+    final theme = NodeEditorTheme.light();
+    await tester.pumpWidget(_host(c, theme: theme));
+    final origin = tester.getTopLeft(find.byType(NodeEditor<void>));
+    final r = SceneRenderer<void>(c)..theme = theme;
+    final mid = r.geometryOf(c.edge('e')!)!.labelPosition;
+    final g = await tester.startGesture(origin + c.viewport.toScreen(mid),
+        kind: PointerDeviceKind.mouse);
+    await g.moveBy(const Offset(0, 40));
+    await g.moveBy(const Offset(10, 80));
+    await g.up();
+    await tester.pump();
+    expect(c.edge('e')!.bend, isNotNull);
+    expect(r.geometryOf(c.edge('e')!)!.distanceTo(mid + const Offset(10, 120)),
+        lessThan(2));
+    // Los nodos no se movieron y la cámara tampoco.
+    expect(c.node('a')!.position, const Offset(20, 100));
+    expect(c.viewport.offset, Offset.zero);
+    // Al mover un nodo, el punto de paso le acompaña (a medias).
+    final before = r.viaOf(c.edge('e')!)!;
+    c.moveNodes(['b'], const Offset(100, 0));
+    expect(r.viaOf(c.edge('e')!), before + const Offset(50, 0));
+  });
+
+  group('guías de alineación', () {
+    List<AlignmentGuide> guides(WidgetTester tester) => tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .map((w) => w.painter)
+        .whereType<EditOverlayPainter<void>>()
+        .single
+        .state
+        .guides;
+
+    testWidgets('al arrastrar, el nodo se alinea y se ven las guías',
+        (tester) async {
+      final c = NodeEditorController<void>(nodes: [
+        _n('a', const Offset(40, 100)),
+        _n('b', const Offset(400, 300)),
+      ]);
+      await tester.pumpWidget(_host(c));
+      final start = tester.getCenter(find.text('Nodo b'));
+      final g = await tester.startGesture(start, kind: PointerDeviceKind.mouse);
+      await g.moveBy(const Offset(0, -40));
+      // Arriba de b queda a 4 px de la de a (100).
+      await g.moveBy(const Offset(0, -156));
+      await tester.pump();
+      expect(c.node('b')!.position.dy, 100);
+      final gs = guides(tester);
+      expect(gs.any((x) => !x.vertical && x.position == 100), isTrue);
+      await g.up();
+      await tester.pump();
+      expect(c.node('b')!.position, const Offset(400, 100));
+      expect(guides(tester), isEmpty);
+    });
+
+    testWidgets('Ctrl desactiva el imán', (tester) async {
+      final c = NodeEditorController<void>(nodes: [
+        _n('a', const Offset(40, 100)),
+        _n('b', const Offset(400, 300)),
+      ]);
+      await tester.pumpWidget(_host(c));
+      final start = tester.getCenter(find.text('Nodo b'));
+      final g = await tester.startGesture(start, kind: PointerDeviceKind.mouse);
+      await g.moveBy(const Offset(0, -40));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await g.moveBy(const Offset(0, -156));
+      await g.up();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(c.node('b')!.position.dy, 104);
+    });
+
+    testWidgets('al redimensionar, el borde se alinea', (tester) async {
+      final c = NodeEditorController<void>(nodes: [
+        _n('a', const Offset(40, 100)),
+        _n('b', const Offset(400, 300)),
+      ]);
+      await tester.pumpWidget(_host(c));
+      final origin = tester.getTopLeft(find.byType(NodeEditor<void>));
+      // Se arrastra el borde derecho de a (x = 200) hasta 3 px del izquierdo
+      // de b (x = 400).
+      final g = await tester.startGesture(origin + const Offset(200, 140),
+          kind: PointerDeviceKind.mouse);
+      await g.moveBy(const Offset(100, 0));
+      await g.moveBy(const Offset(97, 0));
+      await g.up();
+      await tester.pump();
+      expect(c.rectOf('a').right, 400);
     });
   });
 }

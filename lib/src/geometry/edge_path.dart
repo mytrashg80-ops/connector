@@ -51,6 +51,8 @@ Offset _normal(PortSide s) {
 
 /// Construye la geometría de una conexión entre [a] (saliendo por [aSide]) y
 /// [b] (entrando por [bSide]).
+///
+/// Con [via] la línea pasa por ese punto (el usuario la ha arrastrado).
 EdgeGeometry buildEdgeGeometry(
   EdgeCurve curve,
   Offset a,
@@ -59,7 +61,11 @@ EdgeGeometry buildEdgeGeometry(
   PortSide bSide, {
   double cornerRadius = 10,
   double stepGap = 24,
+  Offset? via,
 }) {
+  if (via != null) {
+    return _via(curve, a, aSide, b, bSide, via, cornerRadius, stepGap);
+  }
   switch (curve) {
     case EdgeCurve.bezier:
       return _bezier(a, aSide, b, bSide);
@@ -94,6 +100,113 @@ EdgeGeometry _bezier(Offset a, PortSide aSide, Offset b, PortSide bSide) {
     bounds: _boundsOf([a, c1, c2, b]),
     endDirection: _unit(end),
   );
+}
+
+EdgeGeometry _via(EdgeCurve curve, Offset a, PortSide aSide, Offset b,
+    PortSide bSide, Offset p, double radius, double gap) {
+  switch (curve) {
+    case EdgeCurve.bezier:
+      return _bezierVia(a, aSide, b, bSide, p);
+    case EdgeCurve.straight:
+      return _withLabel(_fromPolyline([a, p, b], 0), p);
+    case EdgeCurve.smoothStep:
+    case EdgeCurve.step:
+      final (pts, label) = _orthogonalVia(a, aSide, b, bSide, p, gap);
+      return _withLabel(
+          _fromPolyline(pts, curve == EdgeCurve.step ? 0 : radius), label);
+  }
+}
+
+EdgeGeometry _withLabel(EdgeGeometry g, Offset label) => EdgeGeometry(
+      path: g.path,
+      polyline: g.polyline,
+      labelPosition: label,
+      bounds: g.bounds,
+      endDirection: g.endDirection,
+    );
+
+/// Dos tramos de Bézier que se unen en [p] con tangente continua.
+EdgeGeometry _bezierVia(
+    Offset a, PortSide aSide, Offset b, PortSide bSide, Offset p) {
+  final da = (p - a).distance, db = (b - p).distance;
+  final k1 = math.max(30.0, math.min(da * 0.5, 200.0));
+  final k2 = math.max(30.0, math.min(db * 0.5, 200.0));
+  final c1 = a + _normal(aSide) * k1;
+  final c4 = b + _normal(bSide) * k2;
+  // Tangente en p: la dirección "de entrada a salida" de la curva.
+  final dir = _unit(c4 - c1);
+  final h = math.min(da, db) * 0.4;
+  final c2 = p - dir * h, c3 = p + dir * h;
+  final path = Path()
+    ..moveTo(a.dx, a.dy)
+    ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, p.dx, p.dy)
+    ..cubicTo(c3.dx, c3.dy, c4.dx, c4.dy, b.dx, b.dy);
+  const samples = 12;
+  final poly = <Offset>[];
+  for (var i = 0; i <= samples; i++) {
+    poly.add(_cubic(a, c1, c2, p, i / samples));
+  }
+  for (var i = 1; i <= samples; i++) {
+    poly.add(_cubic(p, c3, c4, b, i / samples));
+  }
+  return EdgeGeometry(
+    path: path,
+    polyline: poly,
+    labelPosition: p,
+    bounds: _boundsOf([a, c1, c2, p, c3, c4, b]),
+    endDirection: _unit(b - _cubic(p, c3, c4, b, 0.95)),
+  );
+}
+
+/// Trazado ortogonal que respeta [p]: si cae entre ambos extremos mueve el
+/// tramo central hasta él; si no, hace un "puente" a su altura.
+(List<Offset>, Offset) _orthogonalVia(
+    Offset a, PortSide aSide, Offset b, PortSide bSide, Offset p, double gap) {
+  final p1 = a + _normal(aSide) * gap;
+  final p4 = b + _normal(bSide) * gap;
+  final pts = <Offset>[a, p1];
+  Offset label = p;
+  bool between(double v, double x, double y) =>
+      v >= math.min(x, y) && v <= math.max(x, y);
+  if (aSide.isHorizontal && bSide.isHorizontal) {
+    if (between(p.dy, p1.dy, p4.dy)) {
+      pts
+        ..add(Offset(p.dx, p1.dy))
+        ..add(Offset(p.dx, p4.dy));
+    } else {
+      pts
+        ..add(Offset(p1.dx, p.dy))
+        ..add(Offset(p4.dx, p.dy));
+      label = Offset(
+          p.dx.clamp(math.min(p1.dx, p4.dx), math.max(p1.dx, p4.dx)), p.dy);
+    }
+  } else if (!aSide.isHorizontal && !bSide.isHorizontal) {
+    if (between(p.dx, p1.dx, p4.dx)) {
+      pts
+        ..add(Offset(p1.dx, p.dy))
+        ..add(Offset(p4.dx, p.dy));
+    } else {
+      pts
+        ..add(Offset(p.dx, p1.dy))
+        ..add(Offset(p.dx, p4.dy));
+      label = Offset(
+          p.dx, p.dy.clamp(math.min(p1.dy, p4.dy), math.max(p1.dy, p4.dy)));
+    }
+  } else if (aSide.isHorizontal) {
+    pts
+      ..add(Offset(p.dx, p1.dy))
+      ..add(p)
+      ..add(Offset(p4.dx, p.dy));
+  } else {
+    pts
+      ..add(Offset(p1.dx, p.dy))
+      ..add(p)
+      ..add(Offset(p.dx, p4.dy));
+  }
+  pts
+    ..add(p4)
+    ..add(b);
+  return (_simplify(pts), label);
 }
 
 Offset _cubic(Offset p0, Offset p1, Offset p2, Offset p3, double t) {

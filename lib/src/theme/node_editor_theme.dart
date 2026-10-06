@@ -89,6 +89,7 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
     required this.selectionFillColor,
     required this.selectionBorderColor,
     required this.dropTargetColor,
+    this.alignmentGuideColor = const Color(0xFFF43F5E),
     required this.minimapBackground,
     required this.minimapNodeColor,
     required this.minimapSelectedNodeColor,
@@ -166,6 +167,9 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
   final Color selectionFillColor;
   final Color selectionBorderColor;
   final Color dropTargetColor;
+
+  /// Color de las guías de alineación que aparecen al arrastrar.
+  final Color alignmentGuideColor;
 
   // Minimapa
   final Color minimapBackground;
@@ -406,6 +410,7 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
     Color? selectionFillColor,
     Color? selectionBorderColor,
     Color? dropTargetColor,
+    Color? alignmentGuideColor,
     Color? minimapBackground,
     Color? minimapNodeColor,
     Color? minimapSelectedNodeColor,
@@ -472,6 +477,7 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
       selectionFillColor: selectionFillColor ?? this.selectionFillColor,
       selectionBorderColor: selectionBorderColor ?? this.selectionBorderColor,
       dropTargetColor: dropTargetColor ?? this.dropTargetColor,
+      alignmentGuideColor: alignmentGuideColor ?? this.alignmentGuideColor,
       minimapBackground: minimapBackground ?? this.minimapBackground,
       minimapNodeColor: minimapNodeColor ?? this.minimapNodeColor,
       minimapSelectedNodeColor:
@@ -550,6 +556,7 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
       selectionFillColor: c(selectionFillColor, other.selectionFillColor),
       selectionBorderColor: c(selectionBorderColor, other.selectionBorderColor),
       dropTargetColor: c(dropTargetColor, other.dropTargetColor),
+      alignmentGuideColor: c(alignmentGuideColor, other.alignmentGuideColor),
       minimapBackground: c(minimapBackground, other.minimapBackground),
       minimapNodeColor: c(minimapNodeColor, other.minimapNodeColor),
       minimapSelectedNodeColor:

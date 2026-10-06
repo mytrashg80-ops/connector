@@ -27,6 +27,7 @@ class NodeData<T> {
     this.locked = false,
     this.autoSize = false,
     this.color,
+    this.linkBend,
   });
 
   final String id;
@@ -67,6 +68,11 @@ class NodeData<T> {
   /// Color de acento propio. `null` usa el del tipo o el del tema.
   final Color? color;
 
+  /// Punto de paso del enlace con su padre elegido por el usuario, relativo
+  /// al punto medio entre los centros de ambos nodos. `null` = automático.
+  /// No forma parte del contenido: cambiarlo no reconstruye el widget.
+  final Offset? linkBend;
+
   Rect get rect => position & size;
 
   NodePort? port(String portId) {
@@ -90,6 +96,8 @@ class NodeData<T> {
     bool? locked,
     bool? autoSize,
     Color? color,
+    Offset? linkBend,
+    bool clearLinkBend = false,
   }) {
     return NodeData<T>(
       id: id,
@@ -105,6 +113,7 @@ class NodeData<T> {
       locked: locked ?? this.locked,
       autoSize: autoSize ?? this.autoSize,
       color: color ?? this.color,
+      linkBend: clearLinkBend ? null : (linkBend ?? this.linkBend),
     );
   }
 
@@ -141,6 +150,7 @@ class NodeData<T> {
         if (locked) 'locked': true,
         if (autoSize) 'autoSize': true,
         if (color != null) 'color': color!.toARGB32(),
+        if (linkBend != null) 'linkBend': [linkBend!.dx, linkBend!.dy],
       };
 
   static NodeData<T> fromJson<T>(
@@ -167,9 +177,15 @@ class NodeData<T> {
       locked: json['locked'] as bool? ?? false,
       autoSize: json['autoSize'] as bool? ?? false,
       color: json['color'] == null ? null : Color(json['color']! as int),
+      linkBend: _offsetFromJson(json['linkBend']),
     );
   }
 
   @override
   String toString() => 'NodeData($id, "$title", $position)';
+}
+
+Offset? _offsetFromJson(Object? raw) {
+  if (raw is! List || raw.length != 2) return null;
+  return Offset((raw[0] as num).toDouble(), (raw[1] as num).toDouble());
 }

@@ -53,6 +53,8 @@ class NodeEditorConfig {
     this.enableNodeResize = true,
     this.minNodeSize = const Size(72, 36),
     this.enableEdgeEditing = true,
+    this.enableAlignmentGuides = true,
+    this.alignmentSnapDistance = 6,
   });
 
   /// Sólo permite navegar y seleccionar.
@@ -114,6 +116,14 @@ class NodeEditorConfig {
   /// de borrar de la conexión seleccionada.
   final bool enableEdgeEditing;
 
+  /// Al arrastrar o redimensionar nodos muestra guías cuando sus bordes o
+  /// centros quedan alineados con los de otros nodos visibles, y los atrae
+  /// a esa posición. Mantén Ctrl/⌘ pulsado para desactivarlo un momento.
+  final bool enableAlignmentGuides;
+
+  /// Distancia (en píxeles de pantalla) a la que una guía atrae al nodo.
+  final double alignmentSnapDistance;
+
   NodeEditorConfig copyWith({
     bool? readOnly,
     bool? showGrid,
@@ -139,6 +149,8 @@ class NodeEditorConfig {
     bool? enableNodeResize,
     Size? minNodeSize,
     bool? enableEdgeEditing,
+    bool? enableAlignmentGuides,
+    double? alignmentSnapDistance,
   }) {
     return NodeEditorConfig(
       readOnly: readOnly ?? this.readOnly,
@@ -166,6 +178,10 @@ class NodeEditorConfig {
       enableNodeResize: enableNodeResize ?? this.enableNodeResize,
       minNodeSize: minNodeSize ?? this.minNodeSize,
       enableEdgeEditing: enableEdgeEditing ?? this.enableEdgeEditing,
+      enableAlignmentGuides:
+          enableAlignmentGuides ?? this.enableAlignmentGuides,
+      alignmentSnapDistance:
+          alignmentSnapDistance ?? this.alignmentSnapDistance,
     );
   }
 }

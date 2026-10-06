@@ -229,6 +229,38 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _linkMenu(NodeData<Item> child, Offset global) async {
+    final parent = controller.node(child.parentId!);
+    final action = await showMenu<String>(
+      context: context,
+      position:
+          RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
+      items: [
+        if (child.linkBend != null)
+          const PopupMenuItem(
+              value: 'straighten',
+              child: _MenuRow(Icons.straighten, 'Enderezar trazado')),
+        PopupMenuItem(
+            value: 'unlink',
+            child: _MenuRow(
+                Icons.link_off, 'Separar de “${parent?.title ?? ''}”')),
+      ],
+    );
+    if (action == 'straighten') {
+      controller.setLinkBend(child.id, null);
+    } else if (action == 'unlink') {
+      controller.setParent(child.id, null);
+      _onParentChanged(child.id, null);
+    }
+  }
+
+  void _onParentChanged(String child, String? parent) {
+    final c = controller.node(child)?.title;
+    _toast(parent == null
+        ? '“$c” ya no depende de nadie'
+        : '“$c” ahora depende de “${controller.node(parent)?.title}”');
+  }
+
   Future<void> _edgeMenu(EdgeData edge, Offset global) async {
     final action = await showMenu<String>(
       context: context,
@@ -244,6 +276,10 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
           PopupMenuItem(
               value: 'curve:${c.name}',
               child: _MenuRow(Icons.timeline, 'Curva: ${c.name}')),
+        if (edge.bend != null)
+          const PopupMenuItem(
+              value: 'straighten',
+              child: _MenuRow(Icons.straighten, 'Enderezar trazado')),
         const PopupMenuDivider(),
         const PopupMenuItem(
             value: 'delete',
@@ -253,6 +289,8 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
     if (action == null) return;
     if (action == 'delete') {
       controller.removeEdge(edge.id);
+    } else if (action == 'straighten') {
+      controller.setEdgeBend(edge.id, null);
     } else if (action == 'anim') {
       controller.updateEdge(edge.id, (e) => e.copyWith(animated: !e.animated));
     } else if (action.startsWith('curve:')) {
@@ -381,12 +419,11 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
         onNodeDoubleTap: _rename,
         onNodeContextMenu: _nodeMenu,
         onEdgeContextMenu: _edgeMenu,
+        onLinkContextMenu: _linkMenu,
         onCanvasContextMenu: _canvasMenu,
         onConnectionDropped: _onConnectionDropped,
         onConnectionRejected: _toast,
-        onParentChanged: (child, parent) =>
-            _toast('“${controller.node(child)?.title}” ahora depende de '
-                '“${controller.node(parent!)?.title}”'),
+        onParentChanged: _onParentChanged,
       ),
     );
 
@@ -628,11 +665,16 @@ class _Sidebar extends StatelessWidget {
               'Shift + arrastrar: selección múltiple\n'
               'Alt + soltar sobre nodo: asignar jefe/padre\n'
               'Arrastrar un borde: redimensionar\n'
+              'Al arrastrar se muestran guías de\n'
+              '   alineación (Ctrl: sin imán)\n'
               'Arrastrar desde un puerto: conectar\n'
-              'Arrastrar una entrada conectada o el\n'
-              '   extremo de una conexión: moverla\n'
+              'Arrastrar una línea: cambiar su trazado\n'
+              '   (de vuelta a su sitio: recta)\n'
+              'Arrastrar el extremo de una línea:\n'
+              '   moverla a otro nodo/jefe\n'
               '   (soltar en el vacío: desconectar)\n'
-              'Ctrl + arrastrar salida: mover conexión\n'
+              'Arrastrar una entrada conectada o\n'
+              '   Ctrl + arrastrar salida: mover conexión\n'
               'Alt + clic en puerto: romper conexiones\n'
               'Clic derecho / pulsación larga: menú\n'
               'Supr: eliminar · Ctrl+Z / Ctrl+Y\n'

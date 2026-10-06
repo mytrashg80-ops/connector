@@ -10,15 +10,25 @@ import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
 
 class _CachedEdge {
-  _CachedEdge(
-      this.a, this.aSide, this.b, this.bSide, this.curve, this.geometry);
+  _CachedEdge(this.a, this.aSide, this.b, this.bSide, this.curve, this.via,
+      this.geometry);
   final Offset a;
   final PortSide aSide;
   final Offset b;
   final PortSide bSide;
   final EdgeCurve curve;
+  final Offset? via;
   final EdgeGeometry geometry;
   Path? dashed;
+
+  bool matches(Offset a, PortSide aSide, Offset b, PortSide bSide,
+          EdgeCurve curve, Offset? via) =>
+      this.a == a &&
+      this.b == b &&
+      this.aSide == aSide &&
+      this.bSide == bSide &&
+      this.curve == curve &&
+      this.via == via;
 }
 
 /// Pinta conexiones, enlaces de jerarquía y la vista simplificada (LOD) de
@@ -36,6 +46,9 @@ class SceneRenderer<T> {
   /// Conexión que no se pinta (la que se está reconectando: la dibuja la capa
   /// de interacción).
   String? hiddenEdgeId;
+
+  /// Enlace de jerarquía (id del hijo) que no se pinta.
+  String? hiddenLinkId;
 
   final Map<String, _CachedEdge> _edgeCache = {};
   final Map<String, _CachedEdge> _hierarchyCache = {};
@@ -74,6 +87,27 @@ class SceneRenderer<T> {
 
   // ------------------------------------------------------------- geometría
 
+  /// Punto de referencia de los puntos de paso: el medio entre los centros
+  /// de ambos nodos.
+  Offset referenceBetween(String a, String b) =>
+      (controller.rectOf(a).center + controller.rectOf(b).center) / 2;
+
+  /// Punto de paso (en el mundo) de una conexión doblada por el usuario.
+  Offset? viaOf(EdgeData e) {
+    final bend = e.bend;
+    if (bend == null) return null;
+    return referenceBetween(e.sourceNodeId, e.targetNodeId) + bend;
+  }
+
+  /// Rectángulo que contiene seguro la conexión (descarte barato).
+  Rect _roughBox(String a, String b, Offset? via) {
+    var box = controller.rectOf(a).expandToInclude(controller.rectOf(b));
+    if (via != null) {
+      box = box.expandToInclude(Rect.fromCircle(center: via, radius: 1));
+    }
+    return box.inflate(260);
+  }
+
   /// Extremo de una conexión: posición y lado por el que sale/entra.
   (Offset, PortSide)? endpoint(EdgeData e, {required bool source}) {
     final nodeId = source ? e.sourceNodeId : e.targetNodeId;
@@ -90,8 +124,9 @@ class SceneRenderer<T> {
         return (rect.topLeft + local, port.side);
       }
     }
-    final other = controller.rectOf(otherId);
-    return NodeGeometry.floatingAnchor(rect, other.center);
+    // Sin puerto: el lado que mira al otro nodo (o al punto de paso).
+    final toward = viaOf(e) ?? controller.rectOf(otherId).center;
+    return NodeGeometry.floatingAnchor(rect, toward);
   }
 
   /// Geometría (cacheada) de una conexión.
@@ -100,47 +135,106 @@ class SceneRenderer<T> {
     final t = endpoint(e, source: false);
     if (s == null || t == null) return null;
     final curve = e.curve ?? theme.edgeCurve;
+    final via = viaOf(e);
     final c = _edgeCache[e.id];
-    if (c != null &&
-        c.a == s.$1 &&
-        c.b == t.$1 &&
-        c.aSide == s.$2 &&
-        c.bSide == t.$2 &&
-        c.curve == curve) {
+    if (c != null && c.matches(s.$1, s.$2, t.$1, t.$2, curve, via)) {
       return c.geometry;
     }
     final g = buildEdgeGeometry(curve, s.$1, s.$2, t.$1, t.$2,
-        cornerRadius: theme.edgeCornerRadius);
-    _edgeCache[e.id] = _CachedEdge(s.$1, s.$2, t.$1, t.$2, curve, g);
+        cornerRadius: theme.edgeCornerRadius, via: via);
+    _edgeCache[e.id] = _CachedEdge(s.$1, s.$2, t.$1, t.$2, curve, via, g);
     return g;
   }
 
-  EdgeGeometry _hierarchyGeometry(String childId, Rect parent, Rect child) {
+  /// Geometría que tendría [e] sin punto de paso (para "enderezar" al
+  /// arrastrar la línea de vuelta a su sitio).
+  EdgeGeometry? straightGeometryOf(EdgeData e) {
+    if (e.bend == null) return geometryOf(e);
+    final plain = e.copyWith(clearBend: true);
+    final s = endpoint(plain, source: true);
+    final t = endpoint(plain, source: false);
+    if (s == null || t == null) return null;
+    return buildEdgeGeometry(e.curve ?? theme.edgeCurve, s.$1, s.$2, t.$1, t.$2,
+        cornerRadius: theme.edgeCornerRadius);
+  }
+
+  /// Punto de paso (en el mundo) del enlace de [childId] con su padre.
+  Offset? linkViaOf(String childId) {
+    final n = controller.node(childId);
+    final bend = n?.linkBend;
+    if (bend == null) return null;
+    return referenceBetween(n!.parentId!, childId) + bend;
+  }
+
+  /// `true` si el enlace de [childId] con su padre existe y se ve.
+  bool hasVisibleLink(String childId) {
+    if (!showHierarchyLinks) return false;
+    final pid = controller.node(childId)?.parentId;
+    return pid != null &&
+        controller.node(pid) != null &&
+        !controller.isHidden(childId);
+  }
+
+  /// Geometría del enlace de jerarquía de [childId] (va del padre al hijo).
+  EdgeGeometry? linkGeometryOf(String childId, {bool straight = false}) {
+    if (!hasVisibleLink(childId)) return null;
+    final pid = controller.node(childId)!.parentId!;
+    return _hierarchyGeometry(
+        childId, controller.rectOf(pid), controller.rectOf(childId),
+        via: straight ? null : linkViaOf(childId), cache: !straight);
+  }
+
+  /// Extremos del enlace de [childId]: (padre, hijo), con su lado.
+  ((Offset, PortSide), (Offset, PortSide))? linkEnds(String childId) {
+    final pid = controller.node(childId)?.parentId;
+    if (pid == null || controller.node(pid) == null) return null;
+    final (a, aSide, b, bSide) = _linkAnchors(
+        controller.rectOf(pid), controller.rectOf(childId), linkViaOf(childId));
+    return ((a, aSide), (b, bSide));
+  }
+
+  /// Anclajes de un enlace. Sin punto de paso, el padre sale hacia el hijo;
+  /// con él, cada extremo sale por el lado que mira al punto (así la línea
+  /// no atraviesa los nodos cuando se lleva por detrás de ellos).
+  (Offset, PortSide, Offset, PortSide) _linkAnchors(
+      Rect parent, Rect child, Offset? via) {
     final vertical = hierarchyAxis == Axis.vertical;
-    Offset a, b;
-    PortSide aSide, bSide;
     if (vertical) {
       final down =
           child.top >= parent.bottom || child.center.dy >= parent.center.dy;
-      a = down ? parent.bottomCenter : parent.topCenter;
-      b = down ? child.topCenter : child.bottomCenter;
-      aSide = down ? PortSide.bottom : PortSide.top;
-      bSide = down ? PortSide.top : PortSide.bottom;
-    } else {
-      final right = child.center.dx >= parent.center.dx;
-      a = right ? parent.centerRight : parent.centerLeft;
-      b = right ? child.centerLeft : child.centerRight;
-      aSide = right ? PortSide.right : PortSide.left;
-      bSide = right ? PortSide.left : PortSide.right;
+      final pDown = via == null ? down : via.dy >= parent.center.dy;
+      final cUp = via == null ? down : via.dy <= child.center.dy;
+      return (
+        pDown ? parent.bottomCenter : parent.topCenter,
+        pDown ? PortSide.bottom : PortSide.top,
+        cUp ? child.topCenter : child.bottomCenter,
+        cUp ? PortSide.top : PortSide.bottom,
+      );
     }
+    final right = child.center.dx >= parent.center.dx;
+    final pRight = via == null ? right : via.dx >= parent.center.dx;
+    final cLeft = via == null ? right : via.dx <= child.center.dx;
+    return (
+      pRight ? parent.centerRight : parent.centerLeft,
+      pRight ? PortSide.right : PortSide.left,
+      cLeft ? child.centerLeft : child.centerRight,
+      cLeft ? PortSide.left : PortSide.right,
+    );
+  }
+
+  EdgeGeometry _hierarchyGeometry(String childId, Rect parent, Rect child,
+      {Offset? via, bool cache = true}) {
+    final (a, aSide, b, bSide) = _linkAnchors(parent, child, via);
     final curve = theme.hierarchyEdgeCurve;
     final c = _hierarchyCache[childId];
-    if (c != null && c.a == a && c.b == b && c.curve == curve) {
+    if (cache && c != null && c.matches(a, aSide, b, bSide, curve, via)) {
       return c.geometry;
     }
     final g = buildEdgeGeometry(curve, a, aSide, b, bSide,
-        cornerRadius: theme.edgeCornerRadius);
-    _hierarchyCache[childId] = _CachedEdge(a, aSide, b, bSide, curve, g);
+        cornerRadius: theme.edgeCornerRadius, via: via);
+    if (cache) {
+      _hierarchyCache[childId] = _CachedEdge(a, aSide, b, bSide, curve, via, g);
+    }
     return g;
   }
 
@@ -155,10 +249,8 @@ class SceneRenderer<T> {
         continue;
       }
       // Descarte barato (sin calcular la curva) para conexiones lejanas.
-      final box = controller
-          .rectOf(e.sourceNodeId)
-          .expandToInclude(controller.rectOf(e.targetNodeId))
-          .inflate(260 + tolerance);
+      final box = _roughBox(e.sourceNodeId, e.targetNodeId, viaOf(e))
+          .inflate(tolerance);
       if (!box.contains(world)) continue;
       final g = geometryOf(e);
       if (g == null || !g.bounds.inflate(tolerance).contains(world)) continue;
@@ -166,6 +258,28 @@ class SceneRenderer<T> {
       if (d <= bestD) {
         bestD = d;
         best = e;
+      }
+    }
+    return best;
+  }
+
+  /// Enlace de jerarquía (id del hijo) más cercano a [world].
+  String? hitLink(Offset world, double tolerance) {
+    if (!showHierarchyLinks) return null;
+    String? best;
+    var bestD = tolerance;
+    for (final n in controller.nodes) {
+      final pid = n.parentId;
+      if (pid == null || n.id == hiddenLinkId) continue;
+      if (controller.node(pid) == null || controller.isHidden(n.id)) continue;
+      final box = _roughBox(pid, n.id, linkViaOf(n.id)).inflate(tolerance);
+      if (!box.contains(world)) continue;
+      final g = linkGeometryOf(n.id);
+      if (g == null || !g.bounds.inflate(tolerance).contains(world)) continue;
+      final d = g.distanceTo(world);
+      if (d <= bestD) {
+        bestD = d;
+        best = n.id;
       }
     }
     return best;
@@ -202,21 +316,31 @@ class SceneRenderer<T> {
     _stroke
       ..color = t.hierarchyEdgeColor
       ..strokeWidth = lod ? t.hierarchyEdgeWidth * 1.5 : t.hierarchyEdgeWidth;
+    final baseWidth = _stroke.strokeWidth;
     for (final n in controller.nodes) {
       final pid = n.parentId;
-      if (pid == null) continue;
+      if (pid == null || n.id == hiddenLinkId) continue;
       if (controller.node(pid) == null) continue;
       if (controller.isHidden(n.id)) continue;
       final pr = controller.rectOf(pid);
       final cr = controller.rectOf(n.id);
-      if (!pr.expandToInclude(cr).inflate(32).overlaps(region)) continue;
-      final g = _hierarchyGeometry(n.id, pr, cr);
+      final via = linkViaOf(n.id);
+      var box = pr.expandToInclude(cr);
+      if (via != null) {
+        box = box.expandToInclude(Rect.fromCircle(center: via, radius: 1));
+      }
+      if (!box.inflate(32).overlaps(region)) continue;
+      final g = _hierarchyGeometry(n.id, pr, cr, via: via);
+      final selected = controller.isLinkSelected(n.id);
       final accent = n.color ?? t.nodeTypes[n.type]?.color;
-      if (accent != null && !lod) {
+      if (selected) {
+        _stroke.color = t.edgeSelectedColor;
+      } else if (accent != null && !lod) {
         _stroke.color = Color.lerp(t.hierarchyEdgeColor, accent, 0.45)!;
       } else {
         _stroke.color = t.hierarchyEdgeColor;
       }
+      _stroke.strokeWidth = selected ? baseWidth * 1.5 : baseWidth;
       if (t.hierarchyEdgeDashed && !lod) {
         final c = _hierarchyCache[n.id]!;
         canvas.drawPath(
@@ -240,9 +364,10 @@ class SceneRenderer<T> {
         continue;
       }
       // Descarte barato antes de calcular la curva.
-      final sr = controller.rectOf(e.sourceNodeId);
-      final tr = controller.rectOf(e.targetNodeId);
-      if (!sr.expandToInclude(tr).inflate(260).overlaps(region)) continue;
+      if (!_roughBox(e.sourceNodeId, e.targetNodeId, viaOf(e))
+          .overlaps(region)) {
+        continue;
+      }
       final g = geometryOf(e);
       if (g == null || !g.bounds.inflate(16).overlaps(region)) continue;
 

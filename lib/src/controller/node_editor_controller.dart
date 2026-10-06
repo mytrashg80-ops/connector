@@ -95,6 +95,8 @@ class NodeEditorController<T> extends ChangeNotifier {
 
   final LinkedHashSet<String> _selectedNodes = LinkedHashSet();
   final LinkedHashSet<String> _selectedEdges = LinkedHashSet();
+  // Enlaces de jerarquía seleccionados (por el id del hijo).
+  final LinkedHashSet<String> _selectedLinks = LinkedHashSet();
 
   Set<String>? _hiddenCache;
 
@@ -324,10 +326,16 @@ class NodeEditorController<T> extends ChangeNotifier {
   bool isNodeSelected(String id) => _selectedNodes.contains(id);
   bool isEdgeSelected(String id) => _selectedEdges.contains(id);
 
+  /// Enlaces de jerarquía (padre → hijo) seleccionados, identificados por el
+  /// id del hijo.
+  Set<String> get selectedLinkIds => UnmodifiableSetView(_selectedLinks);
+  bool isLinkSelected(String childId) => _selectedLinks.contains(childId);
+
   void selectNodes(Iterable<String> ids, {bool additive = false}) {
     if (!additive) {
       _selectedEdges.clear();
       _selectedNodes.clear();
+      _selectedLinks.clear();
     }
     _selectedNodes.addAll(ids.where(_nodes.containsKey));
     _selectionDirty = true;
@@ -347,6 +355,7 @@ class NodeEditorController<T> extends ChangeNotifier {
     if (!additive) {
       _selectedEdges.clear();
       _selectedNodes.clear();
+      _selectedLinks.clear();
     }
     _selectedEdges.addAll(ids.where(_edges.containsKey));
     _selectionDirty = true;
@@ -359,30 +368,66 @@ class NodeEditorController<T> extends ChangeNotifier {
     _flush();
   }
 
+  /// Selecciona enlaces de jerarquía (ids de los hijos).
+  void selectLinks(Iterable<String> childIds, {bool additive = false}) {
+    if (!additive) {
+      _selectedEdges.clear();
+      _selectedNodes.clear();
+      _selectedLinks.clear();
+    }
+    _selectedLinks.addAll(childIds.where(_hasLink));
+    _selectionDirty = true;
+    _flush();
+  }
+
+  void toggleLinkSelection(String childId) {
+    if (!_selectedLinks.remove(childId) && _hasLink(childId)) {
+      _selectedLinks.add(childId);
+    }
+    _selectionDirty = true;
+    _flush();
+  }
+
+  bool _hasLink(String childId) {
+    final p = _nodes[childId]?.parentId;
+    return p != null && _nodes.containsKey(p);
+  }
+
   void selectAll() {
     _selectedNodes
       ..clear()
       ..addAll(_nodes.keys.where((id) => !isHidden(id)));
     _selectedEdges.clear();
+    _selectedLinks.clear();
     _selectionDirty = true;
     _flush();
   }
 
   void clearSelection() {
-    if (_selectedNodes.isEmpty && _selectedEdges.isEmpty) return;
+    if (_selectedNodes.isEmpty &&
+        _selectedEdges.isEmpty &&
+        _selectedLinks.isEmpty) {
+      return;
+    }
     _selectedNodes.clear();
     _selectedEdges.clear();
+    _selectedLinks.clear();
     _selectionDirty = true;
     _flush();
   }
 
   /// Elimina los nodos y conexiones seleccionados (ignora nodos bloqueados).
+  /// Los enlaces de jerarquía seleccionados se rompen (el hijo pasa a raíz).
   void deleteSelection() {
     final nodes =
         _selectedNodes.where((id) => _nodes[id]?.locked != true).toList();
     final edges = _selectedEdges.toList();
+    final links = _selectedLinks.toList();
     transaction(() {
       removeEdges(edges);
+      for (final id in links) {
+        setParent(id, null);
+      }
       removeNodes(nodes);
     });
   }
@@ -587,9 +632,46 @@ class NodeEditorController<T> extends ChangeNotifier {
     transaction(() => _setNode(
         childId,
         parentId == null
-            ? child.copyWith(clearParent: true)
-            : child.copyWith(parentId: parentId)));
+            ? child.copyWith(clearParent: true, clearLinkBend: true)
+            : child.copyWith(parentId: parentId, clearLinkBend: true)));
     return true;
+  }
+
+  /// Pasa el enlace de jerarquía que cuelga [childId] de su padre a otro
+  /// hijo: [newChildId] queda bajo ese padre y [childId] pasa a raíz.
+  /// Devuelve `false` si no es posible (ciclo, mismo nodo...).
+  bool moveLinkToChild(String childId, String newChildId) {
+    final parent = _nodes[childId]?.parentId;
+    if (parent == null || !_nodes.containsKey(newChildId)) return false;
+    if (newChildId == childId) return true;
+    if (!canSetParent(newChildId, parent)) return false;
+    final bend = _nodes[childId]!.linkBend;
+    transaction(() {
+      setParent(childId, null);
+      setParent(newChildId, parent);
+      if (bend != null) setLinkBend(newChildId, bend);
+    });
+    return true;
+  }
+
+  /// Fija (o quita con `null`) el punto de paso de una conexión.
+  void setEdgeBend(String id, Offset? bend) {
+    final e = _edges[id];
+    if (e == null || e.bend == bend) return;
+    transaction(() => _setEdge(id,
+        bend == null ? e.copyWith(clearBend: true) : e.copyWith(bend: bend)));
+  }
+
+  /// Fija (o quita con `null`) el punto de paso del enlace de [childId] con
+  /// su padre.
+  void setLinkBend(String childId, Offset? bend) {
+    final n = _nodes[childId];
+    if (n == null || n.linkBend == bend) return;
+    transaction(() => _setNode(
+        childId,
+        bend == null
+            ? n.copyWith(clearLinkBend: true)
+            : n.copyWith(linkBend: bend)));
   }
 
   /// `true` si [childId] puede colgar de [parentId] sin crear ciclos.
@@ -877,6 +959,7 @@ class NodeEditorController<T> extends ChangeNotifier {
     }
     _selectedNodes.removeWhere((id) => !_nodes.containsKey(id));
     _selectedEdges.removeWhere((id) => !_edges.containsKey(id));
+    _selectedLinks.removeWhere((id) => !_hasLink(id));
     _selectionDirty = true;
     _flush();
   }
@@ -1038,6 +1121,7 @@ class NodeEditorController<T> extends ChangeNotifier {
     });
     _selectedNodes.clear();
     _selectedEdges.clear();
+    _selectedLinks.clear();
     _selectionDirty = true;
     clearHistory();
     final v = json['viewport'];
@@ -1089,6 +1173,7 @@ class NodeEditorController<T> extends ChangeNotifier {
       final pid = prev!.parentId;
       if (pid != null) _children[pid]?.remove(id);
       if (_selectedNodes.remove(id)) _selectionDirty = true;
+      if (_selectedLinks.remove(id)) _selectionDirty = true;
       _hiddenCache = null;
       _structureDirty = true;
       _geometryDirty = true;
@@ -1109,6 +1194,7 @@ class NodeEditorController<T> extends ChangeNotifier {
       if (prev.collapsed != next.collapsed) _hiddenCache = null;
     }
     if (prev?.parentId != next.parentId) {
+      if (_selectedLinks.remove(id)) _selectionDirty = true;
       if (prev?.parentId != null) _children[prev!.parentId]?.remove(id);
       if (next.parentId != null) {
         (_children[next.parentId!] ??= LinkedHashSet()).add(id);

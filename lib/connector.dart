@@ -16,6 +16,7 @@ export 'src/model/edge.dart';
 export 'src/model/node.dart';
 export 'src/model/port.dart';
 export 'src/theme/node_editor_theme.dart';
+export 'src/widgets/alignment_guides.dart';
 export 'src/widgets/controls.dart';
 export 'src/widgets/default_node.dart';
 export 'src/widgets/editor_config.dart';

@@ -1,4 +1,4 @@
-import 'dart:ui' show Color;
+import 'dart:ui' show Color, Offset;
 
 import 'package:flutter/foundation.dart';
 
@@ -37,6 +37,7 @@ class EdgeData {
     this.dashed,
     this.animated = false,
     this.arrow,
+    this.bend,
     this.metadata,
   });
 
@@ -61,6 +62,11 @@ class EdgeData {
 
   /// Dibuja una flecha en el destino. `null` usa el del tema.
   final bool? arrow;
+
+  /// Punto de paso elegido por el usuario al arrastrar la línea, relativo
+  /// al punto medio entre los centros de ambos nodos (así acompaña a los
+  /// nodos cuando se mueven). `null` = trazado automático.
+  final Offset? bend;
 
   /// Datos libres serializables.
   final Map<String, Object?>? metadata;
@@ -91,6 +97,8 @@ class EdgeData {
     bool? dashed,
     bool? animated,
     bool? arrow,
+    Offset? bend,
+    bool clearBend = false,
     Map<String, Object?>? metadata,
   }) {
     return EdgeData(
@@ -108,6 +116,7 @@ class EdgeData {
       dashed: dashed ?? this.dashed,
       animated: animated ?? this.animated,
       arrow: arrow ?? this.arrow,
+      bend: clearBend ? null : (bend ?? this.bend),
       metadata: metadata ?? this.metadata,
     );
   }
@@ -125,6 +134,7 @@ class EdgeData {
         if (dashed != null) 'dashed': dashed,
         if (animated) 'animated': true,
         if (arrow != null) 'arrow': arrow,
+        if (bend != null) 'bend': [bend!.dx, bend!.dy],
         if (metadata != null) 'metadata': metadata,
       };
 
@@ -143,10 +153,16 @@ class EdgeData {
         dashed: json['dashed'] as bool?,
         animated: json['animated'] as bool? ?? false,
         arrow: json['arrow'] as bool?,
+        bend: _offsetFromJson(json['bend']),
         metadata: (json['metadata'] as Map?)?.cast<String, Object?>(),
       );
 
   @override
   String toString() =>
       'EdgeData($id, $sourceNodeId:$sourcePortId -> $targetNodeId:$targetPortId)';
+}
+
+Offset? _offsetFromJson(Object? raw) {
+  if (raw is! List || raw.length != 2) return null;
+  return Offset((raw[0] as num).toDouble(), (raw[1] as num).toDouble());
 }

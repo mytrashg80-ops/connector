@@ -26,7 +26,9 @@ dependencias aparte de Flutter.
 | **Nodos** | Cualquier widget como cuerpo (`nodeBuilder`), tarjeta por defecto, tamaño fijo o `autoSize`, bloqueo, colores por tipo |
 | **Puertos** | Entrada/salida/ambos, en los 4 lados, con etiqueta, tipo lógico para validar compatibilidad y máximo de conexiones |
 | **Conexiones** | Bézier, ortogonal redondeada, ortogonal, recta. Etiquetas, flechas, trazo discontinuo, flujo animado. Conexiones "flotantes" sin puertos |
-| **Editar conexiones** | Resaltado al pasar el ratón, arrastrar un extremo para reconectar (o soltarlo en el vacío para desconectar), botón × en la conexión seleccionada, Alt + clic en un puerto para romper sus conexiones |
+| **Editar conexiones** | Conexiones y enlaces de jerarquía se seleccionan igual: resaltado al pasar el ratón, arrastrar un extremo para reconectar (o soltarlo en el vacío para desconectar), botón × en la línea seleccionada, Alt + clic en un puerto para romper sus conexiones |
+| **Trazado** | Arrastra cualquier línea para que pase por otro sitio (p. ej. para sacarla de debajo de un nodo). El punto de paso acompaña a los nodos al moverlos; llévala de vuelta a su sitio para enderezarla |
+| **Guías de alineación** | Al arrastrar o redimensionar, los bordes y centros se alinean con los de los nodos visibles y se dibujan guías. Ctrl/⌘ lo desactiva mientras se mantiene |
 | **Tamaño** | Redimensionar arrastrando los bordes (ratón) o las esquinas del nodo seleccionado (táctil), con tamaño mínimo e imán a la rejilla |
 | **Jerarquía** | `parentId` con detección de ciclos, colapsar/expandir subárboles, arrastrar un padre mueve su subárbol, **Alt + soltar** sobre otro nodo para asignarle padre |
 | **Interacción** | Todo se ve en tiempo real mientras arrastras. Pan, zoom con rueda, pinza y trackpad, selección múltiple (Shift/Ctrl, rectángulo con Shift+arrastrar), imán a la rejilla, menús contextuales (clic derecho o pulsación larga), cursores según lo que hay debajo |
@@ -109,14 +111,18 @@ controller.checkConnection(...);      // motivo del rechazo
 controller.connectionValidator = (r) => r.target.type == 'customer' ? null : 'Sólo clientes';
 controller.reconnectEdge(edgeId, moveSource: false, nodeId: 'otro', portId: 'in');
 controller.setNodeRect(id, const Rect.fromLTWH(0, 0, 240, 120)); // posición + tamaño
+controller.setEdgeBend(edgeId, const Offset(0, 80)); // punto de paso (null = automático)
 
 // Jerarquía
 controller.setParent('empleado', 'jefe');   // false si crearía un ciclo
+controller.moveLinkToChild('empleado', 'otro'); // el enlace pasa a otro hijo
+controller.setLinkBend('empleado', const Offset(-60, 0)); // trazado del enlace
 controller.childrenOf(id); controller.descendantsOf(id); controller.ancestorsOf(id);
 controller.toggleCollapsed(id);
 
 // Selección, cámara e historial
 controller.selectNodes(ids); controller.selectedNodeIds;
+controller.selectLinks(['empleado']); controller.selectedLinkIds; // enlaces padre → hijo
 controller.fitView(); controller.centerOnNode(id); controller.viewport.zoomBy(1.2);
 controller.transaction(() { /* varias operaciones = un paso de deshacer */ });
 controller.beginHistoryGroup(); /* gesto largo: notifica al momento */ controller.endHistoryGroup();
@@ -192,14 +198,24 @@ final temaOscuro = NodeEditorTheme.dark(
 (`none` / `withModifier` / `always`), `wheelBehavior` (`zoom` / `pan`),
 `lodScale`, `labelMinScale`, `cullMargin`, `showHierarchyLinks`,
 `hierarchyAxis`, `enableKeyboardShortcuts`, `marqueeOnEmptyDrag`,
-`enableNodeResize`, `minNodeSize`, `enableEdgeEditing`...
+`enableNodeResize`, `minNodeSize`, `enableEdgeEditing`,
+`enableAlignmentGuides`, `alignmentSnapDistance`...
 
 Callbacks del widget: `onNodeTap`, `onNodeDoubleTap`, `onNodeContextMenu`,
 `onEdgeTap`, `onEdgeContextMenu`, `onCanvasTap`, `onCanvasContextMenu`,
 `onConnect`, `onConnectionRejected`, `onConnectionDropped` (para crear un nodo
 ya conectado al soltar una conexión en el vacío), `onNodesMoved`,
 `onParentChanged`, `canReparent`, `onNodeResized`, `canResize`,
-`onEdgeReconnected` y `onEdgeDisconnected`.
+`onEdgeReconnected`, `onEdgeDisconnected`, `onLinkTap` y `onLinkContextMenu`.
+
+Los enlaces de jerarquía (los que dibuja `parentId`) se editan igual que las
+conexiones. Mover el extremo del padre cambia el padre del hijo; mover el del
+hijo pasa el enlace a otro nodo (`moveLinkToChild`); soltarlo en el vacío o
+pulsar × / Supr lo rompe. Cada cambio llega por `onParentChanged` (con
+`parentId` `null` al romperlo) y respeta `canReparent`.
+
+`AlignmentSnapper` (exportado) es el motor de las guías por si quieres usarlo
+en tus propias herramientas.
 
 Para soltar elementos desde tu propia paleta usa un `DragTarget` y
 `GlobalKey<NodeEditorState<T>>().currentState!.globalToWorld(offset)`. Con
@@ -217,7 +233,9 @@ completo en `example/lib/main.dart`.
 | Conectar | Arrastrar desde un puerto de salida |
 | Mover una conexión | Arrastrar su extremo (si está seleccionada o bajo el ratón), arrastrar desde una entrada ya conectada, o Ctrl/⌘ + arrastrar desde cualquier puerto |
 | Desconectar | Soltar el extremo en el vacío, botón × de la conexión seleccionada, Supr, o Alt + clic en el puerto |
+| Cambiar el trazado de una línea | Arrastrarla por el medio (en táctil, primero seleccionarla); llevarla de vuelta a su sitio la endereza |
 | Redimensionar | Arrastrar un borde o una esquina del nodo |
+| Alinear | Automático al arrastrar o redimensionar; mantener Ctrl/⌘ para soltar libremente |
 | Asignar padre | Mantener **Alt** al soltar un nodo sobre otro |
 | Menú contextual | Clic derecho o pulsación larga |
 | Eliminar | Supr / Retroceso |
@@ -257,6 +275,11 @@ recursos:
    largos (arrastrar, redimensionar) agrupan el historial sin retener las
    notificaciones, así que se ven en tiempo real y siguen siendo un único paso
    de deshacer.
+9. **Guías de alineación baratas.** Al empezar el gesto se toman una vez los
+   rectángulos de los nodos visibles; cada movimiento compara sólo con ellos
+   (unas pocas comparaciones por nodo) y no reconstruye nada: las guías se
+   pintan en la capa de ayudas. Doblar una línea tampoco reconstruye el
+   editor, sólo repinta la capa de conexiones.
 
 ## Tests
 

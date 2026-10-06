@@ -1,18 +1,21 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../controller/node_editor_controller.dart';
+import '../geometry/edge_path.dart';
 import '../geometry/node_geometry.dart';
 import '../model/edge.dart';
 import '../model/node.dart';
 import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
 import 'controls.dart';
+import 'alignment_guides.dart';
 import 'default_node.dart';
 import 'edit_overlay.dart';
 import 'editor_config.dart';
@@ -60,6 +63,8 @@ class NodeEditor<T> extends StatefulWidget {
     this.canResize,
     this.onEdgeReconnected,
     this.onEdgeDisconnected,
+    this.onLinkTap,
+    this.onLinkContextMenu,
   });
 
   final NodeEditorController<T> controller;
@@ -122,11 +127,46 @@ class NodeEditor<T> extends StatefulWidget {
   /// Se soltó el extremo de una conexión en el vacío y se eliminó.
   final void Function(EdgeData edge)? onEdgeDisconnected;
 
+  /// Toque sobre un enlace de jerarquía (recibe el nodo hijo).
+  final void Function(NodeData<T> child)? onLinkTap;
+
+  /// Clic derecho / pulsación larga sobre un enlace de jerarquía.
+  final void Function(NodeData<T> child, Offset globalPosition)?
+      onLinkContextMenu;
+
   @override
   State<NodeEditor<T>> createState() => NodeEditorState<T>();
 }
 
-enum _Mode { none, pan, dragNodes, connect, marquee, pinch, resize }
+enum _Mode {
+  none,
+  pan,
+  dragNodes,
+  connect,
+  marquee,
+  pinch,
+  resize,
+  bend,
+  relink
+}
+
+/// Enlace de jerarquía como destino de un toque (por el id del hijo).
+@immutable
+class _LinkTarget {
+  const _LinkTarget(this.childId);
+  final String childId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _LinkTarget && other.childId == childId;
+
+  @override
+  int get hashCode => childId.hashCode;
+}
+
+/// Extremo de una conexión ([edge]) o de un enlace de jerarquía ([link]).
+/// [source] = el de origen (en un enlace, el del padre).
+typedef _EndHit = ({EdgeData? edge, String? link, bool source});
 
 /// Bordes que mueve un redimensionado.
 class _ResizeHit {
@@ -185,6 +225,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   PointerDeviceKind _downKind = PointerDeviceKind.mouse;
   String? _hitNode;
   EdgeData? _hitEdge;
+  String? _hitLink;
   // Arrastre
   Set<String> _dragIds = const {};
   Offset _dragAccum = Offset.zero;
@@ -199,6 +240,14 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   // Reconexión: conexión cuyo extremo se arrastra (el otro queda fijo).
   EdgeData? _reconnect;
   bool _reconnectSource = false;
+  // Enlace de jerarquía cuyo extremo se arrastra (id del hijo).
+  String? _relink;
+  bool _relinkParentEnd = false;
+  String? _relinkTarget;
+  String? _relinkInvalid;
+  // Guías de alineación del gesto en curso.
+  AlignmentSnapper? _snapper;
+  Rect _dragBoxStart = Rect.zero;
   // Ratón
   final ValueNotifier<MouseCursor> _cursor =
       ValueNotifier(SystemMouseCursors.basic);
@@ -302,6 +351,9 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
 
   void _onEdges() {
     _syncTicker();
+    // Doblar una línea no cambia qué puertos están conectados: la capa de
+    // escena se repinta sola y no hace falta reconstruir el editor.
+    if (_mode == _Mode.bend) return;
     if (mounted) setState(() {});
   }
 
@@ -486,50 +538,64 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
 
   bool get _edgeEditing => !_readOnly && widget.config.enableEdgeEditing;
 
-  /// Botón de borrar de la conexión seleccionada bajo [world].
-  EdgeData? _hitDeleteButton(Offset world) {
+  /// Botón de borrar de la conexión (o enlace) seleccionado bajo [world].
+  (EdgeData?, String?)? _hitDeleteButton(Offset world) {
     if (!_edgeEditing) return null;
-    final sel = _c.selectedEdgeIds;
-    if (sel.length != 1 || _c.selectedNodeIds.isNotEmpty) return null;
-    final e = _c.edge(sel.first);
-    if (e == null) return null;
-    final g = _renderer.geometryOf(e);
+    final single = EditHandles.singleSelection(_c);
+    if (single == null) return null;
+    final (edge, link) = single;
+    final g = edge != null
+        ? _renderer.geometryOf(edge)
+        : _renderer.linkGeometryOf(link!);
     if (g == null) return null;
     final s = _c.viewport.scale;
     final c = EditHandles.deleteButtonCenter(
-        e, g, s, s >= widget.config.labelMinScale);
+        edge, g, s, s >= widget.config.labelMinScale);
     final r = (EditHandles.deleteButtonRadius + 4) / s;
-    return (c - world).distance <= r ? e : null;
+    return (c - world).distance <= r ? single : null;
   }
 
-  /// Extremo de una conexión seleccionada (o bajo el ratón) en [world].
-  ({EdgeData edge, bool source})? _hitEdgeEnd(Offset world) {
+  /// Extremo de una conexión o enlace seleccionado (o bajo el ratón) en
+  /// [world].
+  _EndHit? _hitEdgeEnd(Offset world) {
     if (!_edgeEditing) return null;
-    final ids = <String>[
-      ..._c.selectedEdgeIds.take(EditHandles.maxEdgeHandles),
-      if (_interaction.hoverEdgeId != null) _interaction.hoverEdgeId!,
-    ];
     final slop = _theme.portHitRadius / _c.viewport.scale;
-    ({EdgeData edge, bool source})? best;
+    _EndHit? best;
     var bestD = slop;
-    for (final id in ids) {
-      final e = _c.edge(id);
-      if (e == null) continue;
-      final g = _renderer.geometryOf(e);
-      if (g == null) continue;
+    void consider(EdgeGeometry? g, EdgeData? e, String? link) {
+      if (g == null) return;
       final ds = (g.polyline.first - world).distance;
       final dt = (g.polyline.last - world).distance;
       if (ds <= bestD) {
         bestD = ds;
-        best = (edge: e, source: true);
+        best = (edge: e, link: link, source: true);
       }
       if (dt <= bestD) {
         bestD = dt;
-        best = (edge: e, source: false);
+        best = (edge: e, link: link, source: false);
       }
+    }
+
+    for (final id in <String>[
+      ..._c.selectedEdgeIds.take(EditHandles.maxEdgeHandles),
+      if (_interaction.hoverEdgeId != null) _interaction.hoverEdgeId!,
+    ]) {
+      final e = _c.edge(id);
+      if (e != null) consider(_renderer.geometryOf(e), e, null);
+    }
+    for (final id in <String>[
+      ..._c.selectedLinkIds.take(EditHandles.maxEdgeHandles),
+      if (_interaction.hoverLinkId != null) _interaction.hoverLinkId!,
+    ]) {
+      consider(_renderer.linkGeometryOf(id), null, id);
     }
     return best;
   }
+
+  double get _lineTolerance => _theme.edgeHitWidth / _c.viewport.scale;
+
+  /// Enlace de jerarquía bajo [world] (id del hijo).
+  String? _hitLinkAt(Offset world) => _renderer.hitLink(world, _lineTolerance);
 
   /// Conexión más reciente que llega a [port] de [nodeId].
   EdgeData? _lastEdgeAt(String nodeId, NodePort port) {
@@ -576,6 +642,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     _moved = false;
     _hitNode = null;
     _hitEdge = null;
+    _hitLink = null;
 
     final world = _downWorld;
 
@@ -592,13 +659,22 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     if (!_readOnly) {
       final del = _hitDeleteButton(world);
       if (del != null) {
-        _c.removeEdge(del.id);
+        final (edge, link) = del;
+        if (edge != null) {
+          _c.removeEdge(edge.id);
+        } else {
+          _unlink(link!);
+        }
         _mode = _Mode.none;
         return;
       }
       final end = _hitEdgeEnd(world);
       if (end != null) {
-        _startReconnect(end.edge, end.source);
+        if (end.edge != null) {
+          _startReconnect(end.edge!, end.source);
+        } else {
+          _startRelink(end.link!, end.source);
+        }
         return;
       }
       final port = _hitPort(world);
@@ -659,16 +735,36 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       return;
     }
 
-    final edge =
-        _renderer.hitEdge(world, _theme.edgeHitWidth / _c.viewport.scale);
+    final edge = _renderer.hitEdge(world, _lineTolerance);
     if (edge != null) {
       _hitEdge = edge;
+      // En táctil sólo se dobla una línea ya seleccionada, para que arrastrar
+      // sobre ella siga moviendo la vista.
+      final bend = _edgeEditing &&
+          !_multiKey &&
+          (e.kind == PointerDeviceKind.mouse || _c.isEdgeSelected(edge.id));
       if (_multiKey) {
         _c.toggleEdgeSelection(edge.id);
       } else {
         _c.selectEdges([edge.id]);
       }
-      _mode = _Mode.pan;
+      _mode = bend ? _Mode.bend : _Mode.pan;
+      if (e.kind == PointerDeviceKind.touch) _startLongPress(e.position);
+      return;
+    }
+
+    final link = _hitLinkAt(world);
+    if (link != null) {
+      _hitLink = link;
+      final bend = _edgeEditing &&
+          !_multiKey &&
+          (e.kind == PointerDeviceKind.mouse || _c.isLinkSelected(link));
+      if (_multiKey) {
+        _c.toggleLinkSelection(link);
+      } else {
+        _c.selectLinks([link]);
+      }
+      _mode = bend ? _Mode.bend : _Mode.pan;
       if (e.kind == PointerDeviceKind.touch) _startLongPress(e.position);
       return;
     }
@@ -707,7 +803,11 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       if (_mode == _Mode.dragNodes) _beginDrag();
       if (_mode == _Mode.resize) _beginResize();
       if (_reconnect != null) _liftReconnecting();
-      if (_mode == _Mode.pan) _cursor.value = SystemMouseCursors.grabbing;
+      if (_relink != null) _liftRelink();
+      if (_mode == _Mode.bend) _openGroup();
+      if (_mode == _Mode.pan || _mode == _Mode.bend) {
+        _cursor.value = SystemMouseCursors.grabbing;
+      }
     }
     final world = _c.viewport.toWorld(e.localPosition);
 
@@ -720,6 +820,10 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         _updateConnection(world);
       case _Mode.resize:
         _updateResize(e.localDelta);
+      case _Mode.bend:
+        _updateBend(world);
+      case _Mode.relink:
+        _updateRelink(world);
       case _Mode.marquee:
         _interaction
           ..marquee = Rect.fromPoints(_downWorld, world)
@@ -769,7 +873,16 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
           _handleTap(null, e.localPosition);
         }
       case _Mode.pan:
-        if (!_moved) _handleTap(_hitEdge ?? _canvasTapTarget, e.localPosition);
+      case _Mode.bend:
+        if (!_moved) {
+          _handleTap(
+              _hitEdge ??
+                  (_hitLink != null ? _LinkTarget(_hitLink!) : null) ??
+                  _canvasTapTarget,
+              e.localPosition);
+        }
+      case _Mode.relink:
+        _finishRelink();
       case _Mode.none:
       case _Mode.pinch:
         break;
@@ -814,6 +927,9 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       } else {
         widget.onEdgeTap?.call(target);
       }
+    } else if (target is _LinkTarget) {
+      final n = _c.node(target.childId);
+      if (n != null && !isDouble) widget.onLinkTap?.call(n);
     } else {
       if (!isDouble) _c.clearSelection();
       if (isDouble) {
@@ -832,11 +948,16 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       widget.onNodeContextMenu?.call(node, global);
       return;
     }
-    final edge =
-        _renderer.hitEdge(world, _theme.edgeHitWidth / _c.viewport.scale);
+    final edge = _renderer.hitEdge(world, _lineTolerance);
     if (edge != null) {
       _c.selectEdges([edge.id]);
       widget.onEdgeContextMenu?.call(edge, global);
+      return;
+    }
+    final link = _hitLinkAt(world);
+    if (link != null) {
+      _c.selectLinks([link]);
+      widget.onLinkContextMenu?.call(_c.node(link)!, global);
       return;
     }
     widget.onCanvasContextMenu?.call(world, global);
@@ -886,8 +1007,45 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         _hitNode != null && ids.contains(_hitNode) ? _hitNode! : ids.first;
     _hitNode = primary;
     _dragStartPos = _c.node(primary)!.position;
+    Rect? box;
+    for (final id in ids) {
+      if (_c.isHidden(id)) continue;
+      final r = _c.rectOf(id);
+      box = box == null ? r : box.expandToInclude(r);
+    }
+    _dragBoxStart = box ?? _c.rectOf(primary);
+    _snapper = _buildSnapper(ids);
     _openGroup();
     _cursor.value = SystemMouseCursors.grabbing;
+  }
+
+  /// Rectángulos contra los que alinear: nodos visibles (y algo más) que no
+  /// forman parte del gesto.
+  AlignmentSnapper? _buildSnapper(Set<String> exclude) {
+    if (!widget.config.enableAlignmentGuides) return null;
+    final visible = _c.viewport.visibleWorldRect;
+    final area = visible.inflate(math.max(visible.width, visible.height) / 2);
+    final rects = <Rect>[
+      for (final id in _c.queryNodes(area))
+        if (!exclude.contains(id) && !_c.isHidden(id)) _c.rectOf(id),
+    ];
+    return rects.isEmpty ? null : AlignmentSnapper(rects);
+  }
+
+  /// Ctrl/⌘ desactiva el imán de alineación mientras se mantiene.
+  bool get _guidesActive =>
+      _snapper != null &&
+      !HardwareKeyboard.instance.isControlPressed &&
+      !HardwareKeyboard.instance.isMetaPressed;
+
+  double get _snapTolerance =>
+      widget.config.alignmentSnapDistance / _c.viewport.scale;
+
+  void _setGuides(List<AlignmentGuide> guides) {
+    if (listEquals(_interaction.guides, guides)) return;
+    _interaction
+      ..guides = guides
+      ..update();
   }
 
   void _openGroup() {
@@ -909,6 +1067,14 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     if (widget.config.snapToGrid) {
       final g = _theme.gridSpacing;
       target = Offset((target.dx / g).round() * g, (target.dy / g).round() * g);
+    }
+    if (_guidesActive) {
+      final box = _dragBoxStart.shift(target - _dragStartPos);
+      final res = _snapper!.snap(box, _snapTolerance);
+      target += res.delta;
+      _setGuides(res.guides);
+    } else {
+      _setGuides(const []);
     }
     final current = _c.node(_hitNode!)?.position;
     if (current == null) return;
@@ -965,6 +1131,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     _openGroup();
     _resizeStart = _c.rectOf(hit.nodeId);
     _resizeAccum = Offset.zero;
+    _snapper = _buildSnapper({hit.nodeId});
     // Un nodo autoajustable pasa a tamaño fijo: el usuario manda.
     if (n.autoSize) {
       _c.updateNode(hit.nodeId,
@@ -988,6 +1155,26 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     if (hit.right) rt = math.max(snap(rt + _resizeAccum.dx), l + min.width);
     if (hit.top) t = math.min(snap(t + _resizeAccum.dy), b - min.height);
     if (hit.bottom) b = math.max(snap(b + _resizeAccum.dy), t + min.height);
+    if (_guidesActive) {
+      // Sólo se alinean los bordes que se están moviendo.
+      final lines = AlignLines(
+        left: hit.left,
+        centerX: false,
+        right: hit.right,
+        top: hit.top,
+        centerY: false,
+        bottom: hit.bottom,
+      );
+      final res = _snapper!
+          .snap(Rect.fromLTRB(l, t, rt, b), _snapTolerance, lines: lines);
+      if (hit.left) l = math.min(l + res.delta.dx, rt - min.width);
+      if (hit.right) rt = math.max(rt + res.delta.dx, l + min.width);
+      if (hit.top) t = math.min(t + res.delta.dy, b - min.height);
+      if (hit.bottom) b = math.max(b + res.delta.dy, t + min.height);
+      _setGuides(_snapper!.guidesFor(Rect.fromLTRB(l, t, rt, b), lines: lines));
+    } else {
+      _setGuides(const []);
+    }
     _c.setNodeRect(hit.nodeId, Rect.fromLTRB(l, t, rt, b));
   }
 
@@ -1191,8 +1378,140 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     }
   }
 
+  // ------------------------------------------------- trazado de conexiones
+
+  /// Dobla la conexión (o enlace) pulsada para que pase por [world]. Si se
+  /// suelta cerca de su trazado automático, vuelve a él.
+  void _updateBend(Offset world) {
+    final snapBack = 10 / _c.viewport.scale;
+    final edge = _hitEdge;
+    if (edge != null) {
+      final e = _c.edge(edge.id);
+      if (e == null) return;
+      final plain = _renderer.straightGeometryOf(e);
+      final straight =
+          plain != null && (plain.labelPosition - world).distance <= snapBack;
+      _c.setEdgeBend(
+          e.id,
+          straight
+              ? null
+              : world -
+                  _renderer.referenceBetween(e.sourceNodeId, e.targetNodeId));
+      return;
+    }
+    final link = _hitLink;
+    if (link == null) return;
+    final parent = _c.node(link)?.parentId;
+    if (parent == null) return;
+    final plain = _renderer.linkGeometryOf(link, straight: true);
+    final straight =
+        plain != null && (plain.labelPosition - world).distance <= snapBack;
+    _c.setLinkBend(link,
+        straight ? null : world - _renderer.referenceBetween(parent, link));
+  }
+
+  /// Empieza a arrastrar un extremo del enlace de [childId] ([parentEnd] =
+  /// el del padre).
+  void _startRelink(String childId, bool parentEnd) {
+    final ends = _renderer.linkEnds(childId);
+    if (ends == null) return;
+    _mode = _Mode.relink;
+    _relink = childId;
+    _relinkParentEnd = parentEnd;
+    _c.selectLinks([childId]);
+    final (p, c) = ends;
+    final fixed = parentEnd ? c : p;
+    final moving = parentEnd ? p : c;
+    _interaction
+      ..connectFrom = fixed.$1
+      ..connectFromSide = fixed.$2
+      ..connectReversed = parentEnd
+      ..connectTo = moving.$1
+      ..connectToSide = moving.$2
+      ..connectValid = true
+      ..connectCurve = _theme.hierarchyEdgeCurve;
+  }
+
+  void _liftRelink() {
+    final id = _relink!;
+    _renderer.hiddenLinkId = id;
+    _sceneVersion = Object();
+    _cursor.value = SystemMouseCursors.grabbing;
+    setState(() {});
+    _interaction
+      ..reconnectingLinkId = id
+      ..update();
+  }
+
+  void _updateRelink(Offset world) {
+    final child = _relink!;
+    final parent = _c.node(child)?.parentId;
+    final candidate = _c.nodeAt(world);
+    _relinkTarget = candidate?.id;
+    _relinkInvalid = null;
+    if (candidate != null && parent != null) {
+      if (_relinkParentEnd) {
+        // Nuevo padre para el hijo.
+        if (candidate.id != parent &&
+            (!_c.canSetParent(child, candidate.id) ||
+                !(widget.canReparent?.call(_c.node(child)!, candidate) ??
+                    true))) {
+          _relinkInvalid = 'No se puede colgar de ese nodo';
+        }
+      } else if (candidate.id != child &&
+          (!_c.canSetParent(candidate.id, parent) ||
+              !(widget.canReparent?.call(candidate, _c.node(parent)!) ??
+                  true))) {
+        _relinkInvalid = 'Ese nodo no puede depender de este padre';
+      }
+    }
+    final valid = candidate != null && _relinkInvalid == null;
+    _interaction
+      ..connectTo = world
+      ..connectToSide = null
+      ..connectValid = candidate == null ? null : valid
+      ..dropTarget = valid ? _c.rectOf(candidate.id) : null
+      ..update();
+  }
+
+  void _finishRelink() {
+    final child = _relink!;
+    if (!_moved) return; // Sólo un clic: el enlace queda seleccionado.
+    final parent = _c.node(child)?.parentId;
+    if (parent == null) return;
+    final target = _relinkTarget;
+    if (target == null) {
+      _unlink(child);
+      return;
+    }
+    if (_relinkInvalid != null) {
+      widget.onConnectionRejected?.call(_relinkInvalid!);
+      return;
+    }
+    if (_relinkParentEnd) {
+      if (target != parent && _c.setParent(child, target)) {
+        widget.onParentChanged?.call(child, target);
+      }
+    } else if (target != child && _c.moveLinkToChild(child, target)) {
+      widget.onParentChanged?.call(child, null);
+      widget.onParentChanged?.call(target, parent);
+    }
+  }
+
+  /// Rompe el enlace de [childId] con su padre.
+  void _unlink(String childId) {
+    if (_c.node(childId)?.parentId == null) return;
+    if (_c.setParent(childId, null)) {
+      widget.onParentChanged?.call(childId, null);
+    }
+  }
+
   void _endCurrent({bool cancel = false}) {
-    if (_mode == _Mode.dragNodes || _mode == _Mode.resize) _closeGroup();
+    if (_mode == _Mode.dragNodes ||
+        _mode == _Mode.resize ||
+        _mode == _Mode.bend) {
+      _closeGroup();
+    }
     if (cancel) _resetInteraction();
   }
 
@@ -1202,12 +1521,18 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       _dropTargetId = null;
       if (mounted) setState(() {});
     }
-    if (_reconnect != null) {
+    if (_reconnect != null || _relink != null) {
       _reconnect = null;
-      _renderer.hiddenEdgeId = null;
+      _relink = null;
+      _renderer
+        ..hiddenEdgeId = null
+        ..hiddenLinkId = null;
       _sceneVersion = Object();
       if (mounted) setState(() {});
     }
+    _relinkTarget = null;
+    _relinkInvalid = null;
+    _snapper = null;
     _closeGroup();
     _resize = null;
     _mode = _Mode.none;
@@ -1228,13 +1553,17 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   void _onExit(PointerExitEvent e) {
     if (_mode != _Mode.none) return;
     _cursor.value = SystemMouseCursors.basic;
-    _setHoverEdge(null);
+    _setHover(null, null);
   }
 
-  void _setHoverEdge(String? id) {
-    if (_interaction.hoverEdgeId == id) return;
+  void _setHover(String? edgeId, String? linkId) {
+    if (_interaction.hoverEdgeId == edgeId &&
+        _interaction.hoverLinkId == linkId) {
+      return;
+    }
     _interaction
-      ..hoverEdgeId = id
+      ..hoverEdgeId = edgeId
+      ..hoverLinkId = linkId
       ..update();
   }
 
@@ -1244,31 +1573,35 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     final world = _c.viewport.toWorld(local);
     MouseCursor cursor = SystemMouseCursors.basic;
     var hover = _interaction.hoverEdgeId;
+    var hoverLink = _interaction.hoverLinkId;
+    // Las líneas se pueden arrastrar para cambiar su trazado.
+    final lineCursor =
+        _edgeEditing ? SystemMouseCursors.move : SystemMouseCursors.click;
     if (_hitDeleteButton(world) != null) {
       cursor = SystemMouseCursors.click;
     } else if (_hitEdgeEnd(world) != null) {
       cursor = SystemMouseCursors.grab;
     } else if (!_readOnly && _hitPort(world) != null) {
       cursor = SystemMouseCursors.precise;
-      hover = null;
+      hover = hoverLink = null;
     } else {
       final resize = _hitResize(world, kind);
       final node = resize == null ? _c.nodeAt(world) : null;
       if (resize != null) {
         cursor = resize.cursor;
-        hover = null;
+        hover = hoverLink = null;
       } else if (node != null) {
         if (!_readOnly && !node.locked) cursor = SystemMouseCursors.grab;
-        hover = null;
+        hover = hoverLink = null;
       } else {
-        final edge =
-            _renderer.hitEdge(world, _theme.edgeHitWidth / _c.viewport.scale);
+        final edge = _renderer.hitEdge(world, _lineTolerance);
         hover = edge?.id;
-        if (edge != null) cursor = SystemMouseCursors.click;
+        hoverLink = edge == null ? _hitLinkAt(world) : null;
+        if (edge != null || hoverLink != null) cursor = lineCursor;
       }
     }
     _cursor.value = cursor;
-    _setHoverEdge(hover);
+    _setHover(hover, hoverLink);
   }
 
   // --------------------------------------------------- rueda / trackpad
@@ -1349,7 +1682,11 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
 
     if (key == LogicalKeyboardKey.delete ||
         key == LogicalKeyboardKey.backspace) {
+      final links = _c.selectedLinkIds.toList();
       _c.deleteSelection();
+      for (final id in links) {
+        if (_c.containsNode(id)) widget.onParentChanged?.call(id, null);
+      }
       return KeyEventResult.handled;
     }
     if (cmd && key == LogicalKeyboardKey.keyZ) {

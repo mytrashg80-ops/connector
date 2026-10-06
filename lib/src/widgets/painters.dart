@@ -9,6 +9,7 @@ import '../geometry/edge_path.dart';
 import '../model/edge.dart';
 import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
+import 'alignment_guides.dart';
 
 /// Rejilla de fondo en coordenadas de pantalla. Adapta la densidad al zoom
 /// para no dibujar nunca más puntos/líneas de los necesarios.
@@ -114,8 +115,17 @@ class InteractionState extends ChangeNotifier {
   /// Conexión bajo el ratón.
   String? hoverEdgeId;
 
+  /// Enlace de jerarquía (id del hijo) bajo el ratón.
+  String? hoverLinkId;
+
   /// Conexión cuyo extremo se está arrastrando.
   String? reconnectingEdgeId;
+
+  /// Enlace de jerarquía (id del hijo) cuyo extremo se está arrastrando.
+  String? reconnectingLinkId;
+
+  /// Guías de alineación visibles.
+  List<AlignmentGuide> guides = const [];
 
   /// Nodo que se está redimensionando.
   String? resizingNodeId;
@@ -133,7 +143,9 @@ class InteractionState extends ChangeNotifier {
     marquee = null;
     dropTarget = null;
     reconnectingEdgeId = null;
+    reconnectingLinkId = null;
     resizingNodeId = null;
+    guides = const [];
     notifyListeners();
   }
 }

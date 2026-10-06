@@ -1,3 +1,24 @@
+## 0.3.0
+
+- **Enlaces de jerarquía editables:** las líneas padre → hijo se resaltan,
+  se seleccionan (`selectLinks`, `selectedLinkIds`, `toggleLinkSelection`),
+  se borran con × o Supr (el hijo pasa a raíz) y sus extremos se arrastran
+  para cambiar el padre o pasar el enlace a otro nodo
+  (`NodeEditorController.moveLinkToChild`). Nuevos `onLinkTap` y
+  `onLinkContextMenu`. `deleteSelection` también rompe los enlaces
+  seleccionados.
+- **Trazado manual de líneas:** arrastrar una conexión o un enlace hace que
+  pase por ese punto (`EdgeData.bend`, `NodeData.linkBend`,
+  `setEdgeBend`, `setLinkBend`, `buildEdgeGeometry(via:)`). El punto es
+  relativo a los nodos, así que los acompaña; volver a su sitio la endereza.
+  Los extremos sin puerto salen por el lado que mira al punto de paso.
+- **Guías de alineación** al arrastrar y redimensionar, con imán
+  (`NodeEditorConfig.enableAlignmentGuides`, `alignmentSnapDistance`,
+  `NodeEditorTheme.alignmentGuideColor`, `AlignmentSnapper`). Ctrl/⌘ las
+  desactiva mientras se mantiene.
+- Ejemplo: menú contextual de los enlaces y "Enderezar trazado"; corregido un
+  fallo al romper un enlace (`onParentChanged` con padre `null`).
+
 ## 0.2.0
 
 - **Arrastre en tiempo real:** los nodos siguen al puntero mientras se

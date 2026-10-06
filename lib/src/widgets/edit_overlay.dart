@@ -22,10 +22,24 @@ abstract final class EditHandles {
   /// Máximo de conexiones seleccionadas que muestran tiradores.
   static const int maxEdgeHandles = 24;
 
-  /// Centro (en el mundo) del botón de borrar de [e].
+  /// La única conexión `(edge, null)` o enlace de jerarquía `(null, hijo)`
+  /// seleccionado, si no hay nada más seleccionado.
+  static (EdgeData?, String?)? singleSelection(NodeEditorController c) {
+    if (c.selectedNodeIds.isNotEmpty) return null;
+    final edges = c.selectedEdgeIds, links = c.selectedLinkIds;
+    if (edges.length + links.length != 1) return null;
+    if (edges.isNotEmpty) {
+      final e = c.edge(edges.first);
+      return e == null ? null : (e, null);
+    }
+    return (null, links.first);
+  }
+
+  /// Centro (en el mundo) del botón de borrar de [e] (`null` = enlace de
+  /// jerarquía, que no tiene etiqueta).
   static Offset deleteButtonCenter(
-      EdgeData e, EdgeGeometry g, double scale, bool labelsVisible) {
-    final hasLabel = labelsVisible && e.label != null && e.label!.isNotEmpty;
+      EdgeData? e, EdgeGeometry g, double scale, bool labelsVisible) {
+    final hasLabel = labelsVisible && e?.label != null && e!.label!.isNotEmpty;
     // Con etiqueta, el botón va justo debajo para no taparla.
     return hasLabel
         ? g.labelPosition + Offset(0, 14 + deleteButtonRadius / scale)
@@ -84,8 +98,13 @@ class EditOverlayPainter<T> extends CustomPainter {
 
     _paintDropPreview(canvas, s);
     _paintHover(canvas, s);
-    if (edgeEditing) _paintSelectedEdges(canvas, s);
+    if (edgeEditing) {
+      _paintSelectedEdges(canvas, s);
+      _paintSelectedLinks(canvas, s);
+      _paintSingleDelete(canvas, s);
+    }
     if (nodeResize) _paintResize(canvas, s);
+    _paintGuides(canvas, s);
 
     canvas.restore();
   }
@@ -103,13 +122,21 @@ class EditOverlayPainter<T> extends CustomPainter {
   }
 
   void _paintHover(Canvas canvas, double s) {
+    final linkId = state.hoverLinkId;
+    if (linkId != null && !controller.isLinkSelected(linkId)) {
+      final g = renderer.linkGeometryOf(linkId);
+      if (g != null) _paintGlow(canvas, g, theme.hierarchyEdgeWidth, s);
+    }
     final id = state.hoverEdgeId;
     if (id == null || controller.isEdgeSelected(id)) return;
     final e = controller.edge(id);
     if (e == null) return;
     final g = renderer.geometryOf(e);
     if (g == null) return;
-    final w = e.width ?? theme.edgeWidth;
+    _paintGlow(canvas, g, e.width ?? theme.edgeWidth, s);
+  }
+
+  void _paintGlow(Canvas canvas, EdgeGeometry g, double w, double s) {
     _stroke
       ..strokeWidth = w + 8 / s
       ..color = theme.edgeSelectedColor.withValues(alpha: 0.22);
@@ -118,7 +145,7 @@ class EditOverlayPainter<T> extends CustomPainter {
       ..strokeWidth = w * 1.4
       ..color = theme.edgeSelectedColor.withValues(alpha: 0.9);
     canvas.drawPath(g.path, _stroke);
-    if (edgeEditing) _paintEndHandles(canvas, e, g, s);
+    if (edgeEditing) _paintEndHandles(canvas, g, s);
   }
 
   void _paintSelectedEdges(Canvas canvas, double s) {
@@ -135,18 +162,63 @@ class EditOverlayPainter<T> extends CustomPainter {
         ..strokeWidth = (e.width ?? theme.edgeWidth) + 8 / s
         ..color = theme.edgeSelectedColor.withValues(alpha: 0.18);
       canvas.drawPath(g.path, _stroke);
-      _paintEndHandles(canvas, e, g, s);
-    }
-    if (ids.length == 1 && controller.selectedNodeIds.isEmpty) {
-      final e = controller.edge(ids.first);
-      final g = e == null ? null : renderer.geometryOf(e);
-      if (e != null && g != null && e.id != state.reconnectingEdgeId) {
-        _paintDeleteButton(canvas, e, g, s);
-      }
+      _paintEndHandles(canvas, g, s);
     }
   }
 
-  void _paintEndHandles(Canvas canvas, EdgeData e, EdgeGeometry g, double s) {
+  void _paintSelectedLinks(Canvas canvas, double s) {
+    final ids = controller.selectedLinkIds;
+    if (ids.isEmpty || ids.length > EditHandles.maxEdgeHandles) return;
+    for (final id in ids) {
+      if (id == state.reconnectingLinkId) continue;
+      final g = renderer.linkGeometryOf(id);
+      if (g == null) continue;
+      _stroke
+        ..strokeWidth = theme.hierarchyEdgeWidth + 8 / s
+        ..color = theme.edgeSelectedColor.withValues(alpha: 0.18);
+      canvas.drawPath(g.path, _stroke);
+      _paintEndHandles(canvas, g, s);
+    }
+  }
+
+  /// Botón de borrar cuando hay exactamente una conexión o enlace
+  /// seleccionado (y ningún nodo).
+  void _paintSingleDelete(Canvas canvas, double s) {
+    final single = EditHandles.singleSelection(controller);
+    if (single == null) return;
+    final (edge, link) = single;
+    if (edge != null) {
+      if (edge.id == state.reconnectingEdgeId) return;
+      final g = renderer.geometryOf(edge);
+      if (g != null) _paintDeleteButton(canvas, edge, g, s);
+    } else if (link != state.reconnectingLinkId) {
+      final g = renderer.linkGeometryOf(link!);
+      if (g != null) _paintDeleteButton(canvas, null, g, s);
+    }
+  }
+
+  void _paintGuides(Canvas canvas, double s) {
+    final guides = state.guides;
+    if (guides.isEmpty) return;
+    _stroke
+      ..strokeWidth = 1 / s
+      ..color = theme.alignmentGuideColor;
+    _fill.color = theme.alignmentGuideColor;
+    final ext = 12 / s, dot = 2.2 / s;
+    for (final g in guides) {
+      final a = g.vertical
+          ? Offset(g.position, g.start - ext)
+          : Offset(g.start - ext, g.position);
+      final b = g.vertical
+          ? Offset(g.position, g.end + ext)
+          : Offset(g.end + ext, g.position);
+      canvas.drawLine(a, b, _stroke);
+      canvas.drawCircle(a, dot, _fill);
+      canvas.drawCircle(b, dot, _fill);
+    }
+  }
+
+  void _paintEndHandles(Canvas canvas, EdgeGeometry g, double s) {
     final r = theme.portRadius + 3;
     for (final p in [g.polyline.first, g.polyline.last]) {
       _fill.color = theme.nodeColor;
@@ -160,7 +232,8 @@ class EditOverlayPainter<T> extends CustomPainter {
     }
   }
 
-  void _paintDeleteButton(Canvas canvas, EdgeData e, EdgeGeometry g, double s) {
+  void _paintDeleteButton(
+      Canvas canvas, EdgeData? e, EdgeGeometry g, double s) {
     final c = EditHandles.deleteButtonCenter(e, g, s, s >= labelMinScale);
     final r = EditHandles.deleteButtonRadius / s;
     _fill.color = theme.invalidConnectionColor;
