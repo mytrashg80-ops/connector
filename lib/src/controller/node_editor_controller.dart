@@ -128,7 +128,12 @@ class NodeEditorController<T> extends ChangeNotifier {
   bool _selectionDirty = false;
 
   // ---------------------------------------------------------------- historial
+  /// Transacciones abiertas: agrupan el historial y retienen notificaciones.
   int _txDepth = 0;
+
+  /// Grupos de historial abiertos (gestos): agrupan el historial pero dejan
+  /// pasar las notificaciones para que la UI se actualice en tiempo real.
+  int _groupDepth = 0;
   bool _recording = true;
   final Map<String, NodeData<T>?> _txNodes = {};
   final Map<String, EdgeData?> _txEdges = {};
@@ -428,6 +433,29 @@ class NodeEditorController<T> extends ChangeNotifier {
     if (_txDepth == 0) return;
     _txDepth--;
     if (_txDepth > 0) return;
+    _sealHistory();
+    _flush();
+  }
+
+  /// Abre un grupo de historial para un gesto largo (arrastrar, redimensionar,
+  /// reconectar...). Todos los cambios hasta [endHistoryGroup] forman un único
+  /// paso de deshacer, pero a diferencia de [beginTransaction] las
+  /// notificaciones se emiten al momento.
+  void beginHistoryGroup() => _groupDepth++;
+
+  void endHistoryGroup() {
+    assert(_groupDepth > 0, 'endHistoryGroup sin beginHistoryGroup');
+    if (_groupDepth == 0) return;
+    _groupDepth--;
+    _sealHistory();
+    _flush();
+  }
+
+  bool get _grouping => _txDepth > 0 || _groupDepth > 0;
+
+  /// Convierte los cambios acumulados en un paso de deshacer.
+  void _sealHistory() {
+    if (_grouping) return;
     if (_txNodes.isNotEmpty || _txEdges.isNotEmpty) {
       final nb = <String, NodeData<T>?>{}, na = <String, NodeData<T>?>{};
       _txNodes.forEach((id, before) {
@@ -454,7 +482,6 @@ class NodeEditorController<T> extends ChangeNotifier {
         _historyVersion.value++;
       }
     }
-    _flush();
   }
 
   void addNode(NodeData<T> node) => addNodes([node]);
@@ -527,6 +554,16 @@ class NodeEditorController<T> extends ChangeNotifier {
     });
   }
 
+  /// Cambia posición y tamaño de un nodo a la vez (p. ej. al redimensionarlo
+  /// desde un borde).
+  void setNodeRect(String id, Rect rect) {
+    final n = _nodes[id];
+    if (n == null) return;
+    if (n.position == rect.topLeft && n.size == rect.size) return;
+    transaction(() =>
+        _setNode(id, n.copyWith(position: rect.topLeft, size: rect.size)));
+  }
+
   /// Asigna posiciones absolutas.
   void setNodePositions(Map<String, Offset> positions) {
     transaction(() {
@@ -582,11 +619,15 @@ class NodeEditorController<T> extends ChangeNotifier {
   }
 
   /// Valida si se puede crear una conexión.
+  ///
+  /// [ignoreEdgeId] excluye una conexión existente de los límites y de la
+  /// detección de duplicados (útil al reconectarla).
   ConnectionCheck checkConnection({
     required String sourceNodeId,
     String? sourcePortId,
     required String targetNodeId,
     String? targetPortId,
+    String? ignoreEdgeId,
   }) {
     final s = _nodes[sourceNodeId];
     final t = _nodes[targetNodeId];
@@ -615,17 +656,21 @@ class NodeEditorController<T> extends ChangeNotifier {
       return ConnectionCheck.invalid(
           'Tipos incompatibles (${sp.type} → ${tp.type})');
     }
+    int count(String nodeId, String portId) =>
+        connectionCount(nodeId, portId) -
+        (_touchesPort(ignoreEdgeId, nodeId, portId) ? 1 : 0);
     if (sp?.maxConnections != null &&
-        connectionCount(s.id, sp!.id) >= sp.maxConnections!) {
+        count(s.id, sp!.id) >= sp.maxConnections!) {
       return const ConnectionCheck.invalid('El puerto de origen está lleno');
     }
     if (tp?.maxConnections != null &&
-        connectionCount(t.id, tp!.id) >= tp.maxConnections!) {
+        count(t.id, tp!.id) >= tp.maxConnections!) {
       return const ConnectionCheck.invalid('El puerto de destino está lleno');
     }
     if (!allowDuplicateConnections) {
       for (final e in edgesOf(s.id)) {
-        if (e.sourceNodeId == s.id &&
+        if (e.id != ignoreEdgeId &&
+            e.sourceNodeId == s.id &&
             e.sourcePortId == sourcePortId &&
             e.targetNodeId == t.id &&
             e.targetPortId == targetPortId) {
@@ -670,6 +715,46 @@ class NodeEditorController<T> extends ChangeNotifier {
     );
     addEdge(e);
     return e;
+  }
+
+  bool _touchesPort(String? edgeId, String nodeId, String portId) {
+    final e = edgeId == null ? null : _edges[edgeId];
+    if (e == null) return false;
+    return (e.sourceNodeId == nodeId && e.sourcePortId == portId) ||
+        (e.targetNodeId == nodeId && e.targetPortId == portId);
+  }
+
+  /// Mueve uno de los extremos de una conexión existente a otro nodo/puerto.
+  /// Valida igual que [connect]; devuelve la conexión actualizada o `null`
+  /// si no es válida.
+  EdgeData? reconnectEdge(
+    String edgeId, {
+    required bool moveSource,
+    required String nodeId,
+    String? portId,
+  }) {
+    final e = _edges[edgeId];
+    if (e == null) return null;
+    final check = checkConnection(
+      sourceNodeId: moveSource ? nodeId : e.sourceNodeId,
+      sourcePortId: moveSource ? portId : e.sourcePortId,
+      targetNodeId: moveSource ? e.targetNodeId : nodeId,
+      targetPortId: moveSource ? e.targetPortId : portId,
+      ignoreEdgeId: edgeId,
+    );
+    if (!check.isValid) return null;
+    final next = moveSource
+        ? e.copyWith(
+            sourceNodeId: nodeId,
+            sourcePortId: portId,
+            clearSourcePort: portId == null)
+        : e.copyWith(
+            targetNodeId: nodeId,
+            targetPortId: portId,
+            clearTargetPort: portId == null);
+    if (next.sameEnds(e)) return e;
+    transaction(() => _setEdge(edgeId, next));
+    return next;
   }
 
   /// Añade una conexión sin validar.
@@ -759,7 +844,7 @@ class NodeEditorController<T> extends ChangeNotifier {
   // ================================================================ historial
 
   void undo() {
-    if (_undo.isEmpty || _txDepth > 0) return;
+    if (_undo.isEmpty || _grouping) return;
     final p = _undo.removeLast();
     _applyPatch(p.nodesBefore, p.edgesBefore);
     _redo.add(p);
@@ -767,7 +852,7 @@ class NodeEditorController<T> extends ChangeNotifier {
   }
 
   void redo() {
-    if (_redo.isEmpty || _txDepth > 0) return;
+    if (_redo.isEmpty || _grouping) return;
     final p = _redo.removeLast();
     _applyPatch(p.nodesAfter, p.edgesAfter);
     _undo.add(p);
@@ -994,7 +1079,7 @@ class NodeEditorController<T> extends ChangeNotifier {
   void _setNode(String id, NodeData<T>? next) {
     final prev = _nodes[id];
     if (identical(prev, next)) return;
-    if (_recording && _txDepth > 0) _txNodes.putIfAbsent(id, () => prev);
+    if (_recording && _grouping) _txNodes.putIfAbsent(id, () => prev);
     if (next == null) {
       _nodes.remove(id);
       _index.remove(id);
@@ -1037,7 +1122,7 @@ class NodeEditorController<T> extends ChangeNotifier {
   void _setEdge(String id, EdgeData? next) {
     final prev = _edges[id];
     if (identical(prev, next)) return;
-    if (_recording && _txDepth > 0) _txEdges.putIfAbsent(id, () => prev);
+    if (_recording && _grouping) _txEdges.putIfAbsent(id, () => prev);
     if (prev != null) {
       _edgesByNode[prev.sourceNodeId]?.remove(id);
       _edgesByNode[prev.targetNodeId]?.remove(id);

@@ -79,8 +79,10 @@ class EdgeData {
     String? id,
     String? sourceNodeId,
     String? sourcePortId,
+    bool clearSourcePort = false,
     String? targetNodeId,
     String? targetPortId,
+    bool clearTargetPort = false,
     String? label,
     bool clearLabel = false,
     EdgeCurve? curve,
@@ -94,9 +96,11 @@ class EdgeData {
     return EdgeData(
       id: id ?? this.id,
       sourceNodeId: sourceNodeId ?? this.sourceNodeId,
-      sourcePortId: sourcePortId ?? this.sourcePortId,
+      sourcePortId:
+          clearSourcePort ? null : (sourcePortId ?? this.sourcePortId),
       targetNodeId: targetNodeId ?? this.targetNodeId,
-      targetPortId: targetPortId ?? this.targetPortId,
+      targetPortId:
+          clearTargetPort ? null : (targetPortId ?? this.targetPortId),
       label: clearLabel ? null : (label ?? this.label),
       curve: curve ?? this.curve,
       color: color ?? this.color,

@@ -26,8 +26,10 @@ dependencias aparte de Flutter.
 | **Nodos** | Cualquier widget como cuerpo (`nodeBuilder`), tarjeta por defecto, tamaño fijo o `autoSize`, bloqueo, colores por tipo |
 | **Puertos** | Entrada/salida/ambos, en los 4 lados, con etiqueta, tipo lógico para validar compatibilidad y máximo de conexiones |
 | **Conexiones** | Bézier, ortogonal redondeada, ortogonal, recta. Etiquetas, flechas, trazo discontinuo, flujo animado. Conexiones "flotantes" sin puertos |
+| **Editar conexiones** | Resaltado al pasar el ratón, arrastrar un extremo para reconectar (o soltarlo en el vacío para desconectar), botón × en la conexión seleccionada, Alt + clic en un puerto para romper sus conexiones |
+| **Tamaño** | Redimensionar arrastrando los bordes (ratón) o las esquinas del nodo seleccionado (táctil), con tamaño mínimo e imán a la rejilla |
 | **Jerarquía** | `parentId` con detección de ciclos, colapsar/expandir subárboles, arrastrar un padre mueve su subárbol, **Alt + soltar** sobre otro nodo para asignarle padre |
-| **Interacción** | Pan, zoom con rueda, pinza y trackpad, selección múltiple (Shift/Ctrl, rectángulo con Shift+arrastrar), imán a la rejilla, menús contextuales (clic derecho o pulsación larga) |
+| **Interacción** | Todo se ve en tiempo real mientras arrastras. Pan, zoom con rueda, pinza y trackpad, selección múltiple (Shift/Ctrl, rectángulo con Shift+arrastrar), imán a la rejilla, menús contextuales (clic derecho o pulsación larga), cursores según lo que hay debajo |
 | **Edición** | Deshacer/rehacer con transacciones, duplicar, borrar, atajos de teclado |
 | **Auto-organización** | `TreeLayout`, `LayeredLayout` (tipo Sugiyama), `RadialLayout`, `MindMapLayout`, `GridLayout`, con animación opcional |
 | **Extras** | Minimapa, controles de zoom, serialización JSON, tema claro/oscuro totalmente personalizable |
@@ -105,6 +107,8 @@ controller.removeNodes(ids, withDescendants: false);
 controller.connect(...);              // valida; devuelve null si no es válida
 controller.checkConnection(...);      // motivo del rechazo
 controller.connectionValidator = (r) => r.target.type == 'customer' ? null : 'Sólo clientes';
+controller.reconnectEdge(edgeId, moveSource: false, nodeId: 'otro', portId: 'in');
+controller.setNodeRect(id, const Rect.fromLTWH(0, 0, 240, 120)); // posición + tamaño
 
 // Jerarquía
 controller.setParent('empleado', 'jefe');   // false si crearía un ciclo
@@ -115,6 +119,7 @@ controller.toggleCollapsed(id);
 controller.selectNodes(ids); controller.selectedNodeIds;
 controller.fitView(); controller.centerOnNode(id); controller.viewport.zoomBy(1.2);
 controller.transaction(() { /* varias operaciones = un paso de deshacer */ });
+controller.beginHistoryGroup(); /* gesto largo: notifica al momento */ controller.endHistoryGroup();
 controller.undo(); controller.redo();
 
 // Auto-organización (animada si pasas vsync)
@@ -186,16 +191,21 @@ final temaOscuro = NodeEditorTheme.dark(
 `showMinimap`, `showControls`, `dragMovesDescendants`, `reparentMode`
 (`none` / `withModifier` / `always`), `wheelBehavior` (`zoom` / `pan`),
 `lodScale`, `labelMinScale`, `cullMargin`, `showHierarchyLinks`,
-`hierarchyAxis`, `enableKeyboardShortcuts`, `marqueeOnEmptyDrag`...
+`hierarchyAxis`, `enableKeyboardShortcuts`, `marqueeOnEmptyDrag`,
+`enableNodeResize`, `minNodeSize`, `enableEdgeEditing`...
 
 Callbacks del widget: `onNodeTap`, `onNodeDoubleTap`, `onNodeContextMenu`,
 `onEdgeTap`, `onEdgeContextMenu`, `onCanvasTap`, `onCanvasContextMenu`,
 `onConnect`, `onConnectionRejected`, `onConnectionDropped` (para crear un nodo
 ya conectado al soltar una conexión en el vacío), `onNodesMoved`,
-`onParentChanged` y `canReparent`.
+`onParentChanged`, `canReparent`, `onNodeResized`, `canResize`,
+`onEdgeReconnected` y `onEdgeDisconnected`.
 
 Para soltar elementos desde tu propia paleta usa un `DragTarget` y
-`GlobalKey<NodeEditorState<T>>().currentState!.globalToWorld(offset)`.
+`GlobalKey<NodeEditorState<T>>().currentState!.globalToWorld(offset)`. Con
+`showDropPreview(rect)` en `onMove` el editor dibuja la silueta del nodo donde
+caerá (y `showDropPreview(null)` en `onLeave` / al soltar). Hay un ejemplo
+completo en `example/lib/main.dart`.
 
 ### Atajos
 
@@ -204,7 +214,10 @@ Para soltar elementos desde tu propia paleta usa un `DragTarget` y
 | Zoom | Rueda, pinza, trackpad, `+` / `-` |
 | Desplazar | Arrastrar el fondo, botón central, dos dedos |
 | Selección múltiple | Shift/Ctrl + clic, Shift + arrastrar (rectángulo), Ctrl+A |
-| Conectar | Arrastrar desde un puerto (también desde una entrada) |
+| Conectar | Arrastrar desde un puerto de salida |
+| Mover una conexión | Arrastrar su extremo (si está seleccionada o bajo el ratón), arrastrar desde una entrada ya conectada, o Ctrl/⌘ + arrastrar desde cualquier puerto |
+| Desconectar | Soltar el extremo en el vacío, botón × de la conexión seleccionada, Supr, o Alt + clic en el puerto |
+| Redimensionar | Arrastrar un borde o una esquina del nodo |
 | Asignar padre | Mantener **Alt** al soltar un nodo sobre otro |
 | Menú contextual | Clic derecho o pulsación larga |
 | Eliminar | Supr / Retroceso |
@@ -238,6 +251,12 @@ recursos:
 7. **Sin trabajo en reposo.** No hay timers ni tickers activos salvo que existan
    conexiones `animated: true`. El minimapa graba los nodos en una `Picture`
    que reutiliza mientras el grafo no cambie.
+8. **Ayudas de edición en su propia capa.** El resaltado, los tiradores y el
+   tamaño al redimensionar se pintan en una capa aparte, que sólo dibuja algo
+   cuando hay una conexión bajo el ratón o algo seleccionado. Los gestos
+   largos (arrastrar, redimensionar) agrupan el historial sin retener las
+   notificaciones, así que se ven en tiempo real y siguen siendo un único paso
+   de deshacer.
 
 ## Tests
 

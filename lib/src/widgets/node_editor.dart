@@ -14,6 +14,7 @@ import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
 import 'controls.dart';
 import 'default_node.dart';
+import 'edit_overlay.dart';
 import 'editor_config.dart';
 import 'minimap.dart';
 import 'node_canvas.dart';
@@ -55,6 +56,10 @@ class NodeEditor<T> extends StatefulWidget {
     this.onNodesMoved,
     this.onParentChanged,
     this.canReparent,
+    this.onNodeResized,
+    this.canResize,
+    this.onEdgeReconnected,
+    this.onEdgeDisconnected,
   });
 
   final NodeEditorController<T> controller;
@@ -105,11 +110,42 @@ class NodeEditor<T> extends StatefulWidget {
   /// Permite vetar re-parentados desde la UI.
   final bool Function(NodeData<T> child, NodeData<T> parent)? canReparent;
 
+  /// Terminó un redimensionado desde la UI (con el rectángulo final).
+  final void Function(String nodeId, Rect rect)? onNodeResized;
+
+  /// Permite vetar el redimensionado de nodos concretos.
+  final bool Function(NodeData<T> node)? canResize;
+
+  /// Se movió un extremo de una conexión a otro nodo/puerto.
+  final void Function(EdgeData before, EdgeData after)? onEdgeReconnected;
+
+  /// Se soltó el extremo de una conexión en el vacío y se eliminó.
+  final void Function(EdgeData edge)? onEdgeDisconnected;
+
   @override
   State<NodeEditor<T>> createState() => NodeEditorState<T>();
 }
 
-enum _Mode { none, pan, dragNodes, connect, marquee, pinch }
+enum _Mode { none, pan, dragNodes, connect, marquee, pinch, resize }
+
+/// Bordes que mueve un redimensionado.
+class _ResizeHit {
+  const _ResizeHit(this.nodeId, this.left, this.top, this.right, this.bottom);
+  final String nodeId;
+  final bool left, top, right, bottom;
+
+  MouseCursor get cursor {
+    if ((left && top) || (right && bottom)) {
+      return SystemMouseCursors.resizeUpLeftDownRight;
+    }
+    if ((right && top) || (left && bottom)) {
+      return SystemMouseCursors.resizeUpRightDownLeft;
+    }
+    return left || right
+        ? SystemMouseCursors.resizeLeftRight
+        : SystemMouseCursors.resizeUpDown;
+  }
+}
 
 class _NodeCacheEntry {
   _NodeCacheEntry(this.version, this.state, this.widget);
@@ -153,8 +189,19 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   Set<String> _dragIds = const {};
   Offset _dragAccum = Offset.zero;
   Offset _dragStartPos = Offset.zero;
-  bool _dragTx = false;
   String? _dropTargetId;
+  // Grupo de historial abierto por el gesto en curso.
+  bool _group = false;
+  // Redimensionado
+  _ResizeHit? _resize;
+  Rect _resizeStart = Rect.zero;
+  Offset _resizeAccum = Offset.zero;
+  // Reconexión: conexión cuyo extremo se arrastra (el otro queda fijo).
+  EdgeData? _reconnect;
+  bool _reconnectSource = false;
+  // Ratón
+  final ValueNotifier<MouseCursor> _cursor =
+      ValueNotifier(SystemMouseCursors.basic);
   // Conexión
   String? _connectNode;
   NodePort? _connectPort;
@@ -234,6 +281,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     _ticker.dispose();
     _longPressTimer?.cancel();
     _interaction.dispose();
+    _cursor.dispose();
     _dashPhase.dispose();
     _renderer.dispose();
     _ownFocus?.dispose();
@@ -344,6 +392,16 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     return _c.viewport.toWorld(box.globalToLocal(global));
   }
 
+  /// Muestra (o quita con `null`) un rectángulo fantasma en coordenadas del
+  /// mundo. Pensado para dar feedback al arrastrar elementos desde una paleta
+  /// propia hasta el lienzo.
+  void showDropPreview(Rect? worldRect) {
+    if (_interaction.dropPreview == worldRect) return;
+    _interaction
+      ..dropPreview = worldRect
+      ..update();
+  }
+
   Offset worldToGlobal(Offset world) {
     final box = context.findRenderObject() as RenderBox?;
     if (box == null) return world;
@@ -379,6 +437,110 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       }
     }
     return best;
+  }
+
+  bool _canResize(NodeData<T> n) =>
+      widget.config.enableNodeResize &&
+      !n.locked &&
+      (widget.canResize?.call(n) ?? true);
+
+  /// Borde de un nodo bajo [world]. Con ratón vale cualquier borde de
+  /// cualquier nodo; en táctil sólo las esquinas del nodo seleccionado, para
+  /// no confundir redimensionar con arrastrar.
+  _ResizeHit? _hitResize(Offset world, PointerDeviceKind kind) {
+    if (_readOnly || !widget.config.enableNodeResize) return null;
+    final scale = _c.viewport.scale;
+    if (scale < widget.config.lodScale) return null;
+    final touch =
+        kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus;
+    final tol = (touch ? 16 : 5) / scale;
+    final top = _c.nodeAt(world);
+    _ResizeHit? best;
+    var bestZ = -1;
+    for (final id
+        in _c.queryNodes(Rect.fromCircle(center: world, radius: tol))) {
+      if (_c.isHidden(id)) continue;
+      final n = _c.node(id)!;
+      if (!_canResize(n)) continue;
+      if (touch && !(_c.selectedNodeIds.length == 1 && _c.isNodeSelected(id))) {
+        continue;
+      }
+      final z = _c.zOf(id);
+      // Otro nodo por encima tapa este borde.
+      if (top != null && top.id != id && _c.zOf(top.id) > z) continue;
+      final r = _c.rectOf(id);
+      if (!r.inflate(tol).contains(world)) continue;
+      final l = (world.dx - r.left).abs() <= tol;
+      final rt = (world.dx - r.right).abs() <= tol;
+      final t = (world.dy - r.top).abs() <= tol;
+      final b = (world.dy - r.bottom).abs() <= tol;
+      final corner = (l || rt) && (t || b);
+      if (touch ? !corner : !(l || rt || t || b)) continue;
+      if (z > bestZ) {
+        bestZ = z;
+        best = _ResizeHit(id, l, t, rt && !l, b && !t);
+      }
+    }
+    return best;
+  }
+
+  bool get _edgeEditing => !_readOnly && widget.config.enableEdgeEditing;
+
+  /// Botón de borrar de la conexión seleccionada bajo [world].
+  EdgeData? _hitDeleteButton(Offset world) {
+    if (!_edgeEditing) return null;
+    final sel = _c.selectedEdgeIds;
+    if (sel.length != 1 || _c.selectedNodeIds.isNotEmpty) return null;
+    final e = _c.edge(sel.first);
+    if (e == null) return null;
+    final g = _renderer.geometryOf(e);
+    if (g == null) return null;
+    final s = _c.viewport.scale;
+    final c = EditHandles.deleteButtonCenter(
+        e, g, s, s >= widget.config.labelMinScale);
+    final r = (EditHandles.deleteButtonRadius + 4) / s;
+    return (c - world).distance <= r ? e : null;
+  }
+
+  /// Extremo de una conexión seleccionada (o bajo el ratón) en [world].
+  ({EdgeData edge, bool source})? _hitEdgeEnd(Offset world) {
+    if (!_edgeEditing) return null;
+    final ids = <String>[
+      ..._c.selectedEdgeIds.take(EditHandles.maxEdgeHandles),
+      if (_interaction.hoverEdgeId != null) _interaction.hoverEdgeId!,
+    ];
+    final slop = _theme.portHitRadius / _c.viewport.scale;
+    ({EdgeData edge, bool source})? best;
+    var bestD = slop;
+    for (final id in ids) {
+      final e = _c.edge(id);
+      if (e == null) continue;
+      final g = _renderer.geometryOf(e);
+      if (g == null) continue;
+      final ds = (g.polyline.first - world).distance;
+      final dt = (g.polyline.last - world).distance;
+      if (ds <= bestD) {
+        bestD = ds;
+        best = (edge: e, source: true);
+      }
+      if (dt <= bestD) {
+        bestD = dt;
+        best = (edge: e, source: false);
+      }
+    }
+    return best;
+  }
+
+  /// Conexión más reciente que llega a [port] de [nodeId].
+  EdgeData? _lastEdgeAt(String nodeId, NodePort port) {
+    EdgeData? last;
+    for (final e in _c.edgesOf(nodeId)) {
+      if ((e.sourceNodeId == nodeId && e.sourcePortId == port.id) ||
+          (e.targetNodeId == nodeId && e.targetPortId == port.id)) {
+        last = e;
+      }
+    }
+    return last;
   }
 
   // ================================================================ punteros
@@ -428,9 +590,57 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     }
 
     if (!_readOnly) {
+      final del = _hitDeleteButton(world);
+      if (del != null) {
+        _c.removeEdge(del.id);
+        _mode = _Mode.none;
+        return;
+      }
+      final end = _hitEdgeEnd(world);
+      if (end != null) {
+        _startReconnect(end.edge, end.source);
+        return;
+      }
       final port = _hitPort(world);
       if (port != null) {
+        final existing = _lastEdgeAt(port.nodeId, port.port);
+        if (existing != null && _alt) {
+          // Alt + clic en un puerto: rompe sus conexiones (como en Unreal).
+          _c.removeEdges([
+            for (final e in _c.edgesOf(port.nodeId))
+              if ((e.sourceNodeId == port.nodeId &&
+                      e.sourcePortId == port.port.id) ||
+                  (e.targetNodeId == port.nodeId &&
+                      e.targetPortId == port.port.id))
+                e.id
+          ]);
+          _mode = _Mode.none;
+          return;
+        }
+        if (existing != null &&
+            _edgeEditing &&
+            (!port.port.canSend ||
+                HardwareKeyboard.instance.isControlPressed ||
+                HardwareKeyboard.instance.isMetaPressed)) {
+          // Arrastrar desde una entrada ya conectada (o Ctrl/⌘ + arrastrar
+          // desde cualquier puerto) recoge su última conexión para moverla.
+          _startReconnect(
+              existing,
+              existing.sourceNodeId == port.nodeId &&
+                  existing.sourcePortId == port.port.id);
+          return;
+        }
         _startConnection(port.nodeId, port.port, port.position);
+        return;
+      }
+      final resize = _hitResize(world, e.kind);
+      if (resize != null) {
+        _hitNode = resize.nodeId;
+        if (!_c.isNodeSelected(resize.nodeId)) _c.selectNode(resize.nodeId);
+        _c.bringToFront([resize.nodeId]);
+        _resize = resize;
+        _mode = _Mode.resize;
+        _cursor.value = resize.cursor;
         return;
       }
     }
@@ -495,6 +705,9 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       _moved = true;
       _cancelLongPress();
       if (_mode == _Mode.dragNodes) _beginDrag();
+      if (_mode == _Mode.resize) _beginResize();
+      if (_reconnect != null) _liftReconnecting();
+      if (_mode == _Mode.pan) _cursor.value = SystemMouseCursors.grabbing;
     }
     final world = _c.viewport.toWorld(e.localPosition);
 
@@ -505,6 +718,8 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         _updateDrag(e.localDelta, world);
       case _Mode.connect:
         _updateConnection(world);
+      case _Mode.resize:
+        _updateResize(e.localDelta);
       case _Mode.marquee:
         _interaction
           ..marquee = Rect.fromPoints(_downWorld, world)
@@ -539,6 +754,8 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         }
       case _Mode.connect:
         _finishConnection(world, e.position);
+      case _Mode.resize:
+        _endResize();
       case _Mode.marquee:
         final m = _interaction.marquee;
         if (m != null) {
@@ -558,6 +775,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         break;
     }
     _resetInteraction();
+    _updateHover(e.localPosition, e.kind);
   }
 
   void _onPointerCancel(PointerCancelEvent e) {
@@ -668,8 +886,20 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         _hitNode != null && ids.contains(_hitNode) ? _hitNode! : ids.first;
     _hitNode = primary;
     _dragStartPos = _c.node(primary)!.position;
-    _c.beginTransaction();
-    _dragTx = true;
+    _openGroup();
+    _cursor.value = SystemMouseCursors.grabbing;
+  }
+
+  void _openGroup() {
+    if (_group) return;
+    _group = true;
+    _c.beginHistoryGroup();
+  }
+
+  void _closeGroup() {
+    if (!_group) return;
+    _group = false;
+    _c.endHistoryGroup();
   }
 
   void _updateDrag(Offset screenDelta, Offset world) {
@@ -719,11 +949,54 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         if (_c.setParent(id, target)) widget.onParentChanged?.call(id, target);
       }
     }
-    if (_dragTx) {
-      _dragTx = false;
-      _c.commitTransaction();
-    }
+    _closeGroup();
     if (_dragIds.isNotEmpty) widget.onNodesMoved?.call(_dragIds.toList());
+  }
+
+  // --------------------------------------------------------- redimensionado
+
+  void _beginResize() {
+    final hit = _resize!;
+    final n = _c.node(hit.nodeId);
+    if (n == null) {
+      _mode = _Mode.none;
+      return;
+    }
+    _openGroup();
+    _resizeStart = _c.rectOf(hit.nodeId);
+    _resizeAccum = Offset.zero;
+    // Un nodo autoajustable pasa a tamaño fijo: el usuario manda.
+    if (n.autoSize) {
+      _c.updateNode(hit.nodeId,
+          (n) => n.copyWith(autoSize: false, size: _resizeStart.size));
+    }
+    _interaction
+      ..resizingNodeId = hit.nodeId
+      ..update();
+  }
+
+  void _updateResize(Offset screenDelta) {
+    final hit = _resize;
+    if (hit == null || _interaction.resizingNodeId == null) return;
+    _resizeAccum += screenDelta / _c.viewport.scale;
+    final min = widget.config.minNodeSize;
+    final g = _theme.gridSpacing;
+    double snap(double v) => widget.config.snapToGrid ? (v / g).round() * g : v;
+    final r = _resizeStart;
+    var l = r.left, t = r.top, rt = r.right, b = r.bottom;
+    if (hit.left) l = math.min(snap(l + _resizeAccum.dx), rt - min.width);
+    if (hit.right) rt = math.max(snap(rt + _resizeAccum.dx), l + min.width);
+    if (hit.top) t = math.min(snap(t + _resizeAccum.dy), b - min.height);
+    if (hit.bottom) b = math.max(snap(b + _resizeAccum.dy), t + min.height);
+    _c.setNodeRect(hit.nodeId, Rect.fromLTRB(l, t, rt, b));
+  }
+
+  void _endResize() {
+    final id = _interaction.resizingNodeId;
+    _closeGroup();
+    if (id != null && _c.containsNode(id)) {
+      widget.onNodeResized?.call(id, _c.rectOf(id));
+    }
   }
 
   // ------------------------------------------------------------- conexión
@@ -742,8 +1015,61 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       ..update();
   }
 
+  /// Empieza a arrastrar un extremo de [edge] ([source] = el de origen).
+  void _startReconnect(EdgeData edge, bool source) {
+    final fixed = _renderer.endpoint(edge, source: !source);
+    final moving = _renderer.endpoint(edge, source: source);
+    if (fixed == null || moving == null) return;
+    _mode = _Mode.connect;
+    _reconnect = edge;
+    _reconnectSource = source;
+    _connectNode = source ? edge.targetNodeId : edge.sourceNodeId;
+    final fixedPortId = source ? edge.targetPortId : edge.sourcePortId;
+    _connectPort =
+        fixedPortId == null ? null : _c.node(_connectNode!)?.port(fixedPortId);
+    _c.selectEdges([edge.id]);
+    // La línea original se oculta y se dibuja la vista previa en cuanto el
+    // puntero se mueve (un simple clic sólo selecciona).
+    _interaction
+      ..reconnectingEdgeId = null
+      ..connectFrom = fixed.$1
+      ..connectFromSide = fixed.$2
+      ..connectReversed = source
+      ..connectTo = moving.$1
+      ..connectToSide = moving.$2
+      ..connectValid = true
+      ..connectCurve = edge.curve ?? _theme.edgeCurve;
+  }
+
+  void _liftReconnecting() {
+    final edge = _reconnect!;
+    _renderer.hiddenEdgeId = edge.id;
+    _sceneVersion = Object();
+    _cursor.value = SystemMouseCursors.grabbing;
+    setState(() {});
+    _interaction
+      ..reconnectingEdgeId = edge.id
+      ..update();
+  }
+
   ({String sNode, String? sPort, String tNode, String? tPort}) _orient(
       String otherNode, NodePort? otherPort) {
+    final r = _reconnect;
+    if (r != null) {
+      return _reconnectSource
+          ? (
+              sNode: otherNode,
+              sPort: otherPort?.id,
+              tNode: r.targetNodeId,
+              tPort: r.targetPortId
+            )
+          : (
+              sNode: r.sourceNodeId,
+              sPort: r.sourcePortId,
+              tNode: otherNode,
+              tPort: otherPort?.id
+            );
+    }
     final reversed = !_connectPort!.canSend ||
         (_connectPort!.direction == PortDirection.both &&
             otherPort != null &&
@@ -775,7 +1101,8 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
           sourceNodeId: o.sNode,
           sourcePortId: o.sPort,
           targetNodeId: o.tNode,
-          targetPortId: o.tPort);
+          targetPortId: o.tPort,
+          ignoreEdgeId: _reconnect?.id);
       _connectTargetNode = hit.nodeId;
       _connectTargetPort = hit.port;
       _connectInvalidReason = check.reason;
@@ -792,7 +1119,8 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
             sourceNodeId: o.sNode,
             sourcePortId: o.sPort,
             targetNodeId: o.tNode,
-            targetPortId: o.tPort);
+            targetPortId: o.tPort,
+            ignoreEdgeId: _reconnect?.id);
         _connectTargetNode = n.id;
         _connectInvalidReason = check.reason;
         _interaction.connectValid = check.isValid;
@@ -807,6 +1135,10 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   }
 
   void _finishConnection(Offset world, Offset global) {
+    if (_reconnect != null) {
+      _finishReconnect();
+      return;
+    }
     final targetNode = _connectTargetNode;
     if (targetNode != null) {
       if (_connectInvalidReason != null) {
@@ -834,11 +1166,33 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     }
   }
 
-  void _endCurrent({bool cancel = false}) {
-    if (_mode == _Mode.dragNodes && _dragTx) {
-      _dragTx = false;
-      _c.commitTransaction();
+  void _finishReconnect() {
+    final before = _reconnect!;
+    final target = _connectTargetNode;
+    if (!_moved) return; // Sólo un clic: la conexión queda seleccionada.
+    if (target != null) {
+      if (_connectInvalidReason != null) {
+        widget.onConnectionRejected?.call(_connectInvalidReason!);
+        return;
+      }
+      final after = _c.reconnectEdge(
+        before.id,
+        moveSource: _reconnectSource,
+        nodeId: target,
+        portId: _connectTargetPort?.id,
+      );
+      if (after != null && !identical(after, before)) {
+        widget.onEdgeReconnected?.call(before, after);
+      }
+    } else {
+      // Soltada en el vacío: se desconecta.
+      _c.removeEdge(before.id);
+      widget.onEdgeDisconnected?.call(before);
     }
+  }
+
+  void _endCurrent({bool cancel = false}) {
+    if (_mode == _Mode.dragNodes || _mode == _Mode.resize) _closeGroup();
     if (cancel) _resetInteraction();
   }
 
@@ -848,10 +1202,14 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       _dropTargetId = null;
       if (mounted) setState(() {});
     }
-    if (_dragTx) {
-      _dragTx = false;
-      _c.commitTransaction();
+    if (_reconnect != null) {
+      _reconnect = null;
+      _renderer.hiddenEdgeId = null;
+      _sceneVersion = Object();
+      if (mounted) setState(() {});
     }
+    _closeGroup();
+    _resize = null;
     _mode = _Mode.none;
     _dragIds = const {};
     _connectNode = null;
@@ -860,6 +1218,57 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     _connectTargetPort = null;
     _connectInvalidReason = null;
     _interaction.clear();
+  }
+
+  // ------------------------------------------------------------ hover
+
+  void _onPointerHover(PointerHoverEvent e) =>
+      _updateHover(e.localPosition, e.kind);
+
+  void _onExit(PointerExitEvent e) {
+    if (_mode != _Mode.none) return;
+    _cursor.value = SystemMouseCursors.basic;
+    _setHoverEdge(null);
+  }
+
+  void _setHoverEdge(String? id) {
+    if (_interaction.hoverEdgeId == id) return;
+    _interaction
+      ..hoverEdgeId = id
+      ..update();
+  }
+
+  /// Cursor y resaltado según lo que haya bajo el ratón.
+  void _updateHover(Offset local, PointerDeviceKind kind) {
+    if (kind == PointerDeviceKind.touch || _mode != _Mode.none) return;
+    final world = _c.viewport.toWorld(local);
+    MouseCursor cursor = SystemMouseCursors.basic;
+    var hover = _interaction.hoverEdgeId;
+    if (_hitDeleteButton(world) != null) {
+      cursor = SystemMouseCursors.click;
+    } else if (_hitEdgeEnd(world) != null) {
+      cursor = SystemMouseCursors.grab;
+    } else if (!_readOnly && _hitPort(world) != null) {
+      cursor = SystemMouseCursors.precise;
+      hover = null;
+    } else {
+      final resize = _hitResize(world, kind);
+      final node = resize == null ? _c.nodeAt(world) : null;
+      if (resize != null) {
+        cursor = resize.cursor;
+        hover = null;
+      } else if (node != null) {
+        if (!_readOnly && !node.locked) cursor = SystemMouseCursors.grab;
+        hover = null;
+      } else {
+        final edge =
+            _renderer.hitEdge(world, _theme.edgeHitWidth / _c.viewport.scale);
+        hover = edge?.id;
+        if (edge != null) cursor = SystemMouseCursors.click;
+      }
+    }
+    _cursor.value = cursor;
+    _setHoverEdge(hover);
   }
 
   // --------------------------------------------------- rueda / trackpad
@@ -1044,27 +1453,52 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
                       painter: GridPainter(viewport: _c.viewport, theme: theme),
                     ),
                   ),
-                Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerDown: _onPointerDown,
-                  onPointerMove: _onPointerMove,
-                  onPointerUp: _onPointerUp,
-                  onPointerCancel: _onPointerCancel,
-                  onPointerSignal: _onPointerSignal,
-                  onPointerPanZoomStart: _onPanZoomStart,
-                  onPointerPanZoomUpdate: _onPanZoomUpdate,
-                  child: NodeCanvas<T>(
-                    controller: _c,
-                    renderer: _renderer,
-                    dashPhase: _dashPhase,
-                    lodScale: config.lodScale,
-                    cullMargin: config.cullMargin,
-                    sceneVersion: _sceneVersion,
-                    children: [
-                      const SceneLayer(),
-                      for (final id in _visible)
-                        if (_c.containsNode(id)) _buildNode(context, id),
-                    ],
+                ValueListenableBuilder<MouseCursor>(
+                  valueListenable: _cursor,
+                  builder: (context, cursor, child) => MouseRegion(
+                    cursor: cursor,
+                    onExit: _onExit,
+                    child: child,
+                  ),
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: _onPointerDown,
+                    onPointerMove: _onPointerMove,
+                    onPointerUp: _onPointerUp,
+                    onPointerHover: _onPointerHover,
+                    onPointerCancel: _onPointerCancel,
+                    onPointerSignal: _onPointerSignal,
+                    onPointerPanZoomStart: _onPanZoomStart,
+                    onPointerPanZoomUpdate: _onPanZoomUpdate,
+                    child: NodeCanvas<T>(
+                      controller: _c,
+                      renderer: _renderer,
+                      dashPhase: _dashPhase,
+                      lodScale: config.lodScale,
+                      cullMargin: config.cullMargin,
+                      sceneVersion: _sceneVersion,
+                      children: [
+                        const SceneLayer(),
+                        for (final id in _visible)
+                          if (_c.containsNode(id)) _buildNode(context, id),
+                      ],
+                    ),
+                  ),
+                ),
+                IgnorePointer(
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: EditOverlayPainter<T>(
+                        controller: _c,
+                        renderer: _renderer,
+                        state: _interaction,
+                        theme: theme,
+                        edgeEditing: _edgeEditing,
+                        nodeResize: !_readOnly && config.enableNodeResize,
+                        labelMinScale: config.labelMinScale,
+                        canResize: _canResize,
+                      ),
+                    ),
                   ),
                 ),
                 IgnorePointer(

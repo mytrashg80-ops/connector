@@ -33,6 +33,10 @@ class SceneRenderer<T> {
   Axis hierarchyAxis = Axis.vertical;
   double labelMinScale = 0.45;
 
+  /// Conexión que no se pinta (la que se está reconectando: la dibuja la capa
+  /// de interacción).
+  String? hiddenEdgeId;
+
   final Map<String, _CachedEdge> _edgeCache = {};
   final Map<String, _CachedEdge> _hierarchyCache = {};
   final Map<String, TextPainter> _labelCache = {};
@@ -145,10 +149,17 @@ class SceneRenderer<T> {
     EdgeData? best;
     var bestD = tolerance;
     for (final e in controller.edges) {
-      if (controller.isHidden(e.sourceNodeId) ||
+      if (e.id == hiddenEdgeId ||
+          controller.isHidden(e.sourceNodeId) ||
           controller.isHidden(e.targetNodeId)) {
         continue;
       }
+      // Descarte barato (sin calcular la curva) para conexiones lejanas.
+      final box = controller
+          .rectOf(e.sourceNodeId)
+          .expandToInclude(controller.rectOf(e.targetNodeId))
+          .inflate(260 + tolerance);
+      if (!box.contains(world)) continue;
       final g = geometryOf(e);
       if (g == null || !g.bounds.inflate(tolerance).contains(world)) continue;
       final d = g.distanceTo(world);
@@ -223,7 +234,8 @@ class SceneRenderer<T> {
     final showLabels = !lod && scale >= labelMinScale;
     final labels = <(EdgeData, EdgeGeometry, Color)>[];
     for (final e in controller.edges) {
-      if (controller.isHidden(e.sourceNodeId) ||
+      if (e.id == hiddenEdgeId ||
+          controller.isHidden(e.sourceNodeId) ||
           controller.isHidden(e.targetNodeId)) {
         continue;
       }

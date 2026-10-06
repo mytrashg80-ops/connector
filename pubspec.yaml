@@ -3,7 +3,7 @@ description: >-
   Editor de nodos de alto rendimiento para Flutter. Crea, conecta, mueve y
   jerarquiza nodos para organigramas, sucursales, cadenas de ensamblado,
   distribución, inventarios y mapas mentales libres.
-version: 0.1.0
+version: 0.2.0
 publish_to: none
 
 environment:

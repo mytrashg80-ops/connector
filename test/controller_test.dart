@@ -325,4 +325,58 @@ void main() {
       expect(c.nodeAt(const Offset(30, 30))!.id, 'a');
     });
   });
+
+  test('un grupo de historial notifica al momento y deshace de una vez', () {
+    final c = NodeEditorController<void>(nodes: [
+      const NodeData<void>(id: 'a', position: Offset.zero),
+    ]);
+    var fired = 0;
+    c.geometry.addListener(() => fired++);
+    c.beginHistoryGroup();
+    c.moveNodes(['a'], const Offset(10, 0));
+    expect(fired, 1);
+    c.moveNodes(['a'], const Offset(10, 0));
+    expect(fired, 2);
+    c.undo(); // Bloqueado mientras el grupo está abierto.
+    expect(c.node('a')!.position, const Offset(20, 0));
+    c.endHistoryGroup();
+    c.undo();
+    expect(c.node('a')!.position, Offset.zero);
+    expect(c.canUndo, isFalse);
+  });
+
+  test('reconnectEdge valida y mueve un extremo', () {
+    final c = NodeEditorController<void>(nodes: [
+      for (final id in ['a', 'b', 'c'])
+        NodeData<void>(id: id, position: Offset.zero, ports: const [
+          NodePort.input(id: 'in', maxConnections: 1),
+          NodePort.output(id: 'out'),
+        ]),
+    ]);
+    c.connect(
+        sourceNodeId: 'a',
+        sourcePortId: 'out',
+        targetNodeId: 'b',
+        targetPortId: 'in',
+        id: 'e1');
+    c.connect(
+        sourceNodeId: 'b',
+        sourcePortId: 'out',
+        targetNodeId: 'c',
+        targetPortId: 'in',
+        id: 'e2');
+    // c.in está lleno (maxConnections: 1).
+    expect(c.reconnectEdge('e1', moveSource: false, nodeId: 'c', portId: 'in'),
+        isNull);
+    // Volver a su propio puerto no cuenta como duplicado ni como lleno.
+    expect(c.reconnectEdge('e1', moveSource: false, nodeId: 'b', portId: 'in'),
+        isNotNull);
+    final moved =
+        c.reconnectEdge('e2', moveSource: true, nodeId: 'a', portId: 'out');
+    expect(moved!.sourceNodeId, 'a');
+    expect(c.edgesOf('b').length, 1);
+    final floating =
+        c.reconnectEdge('e2', moveSource: true, nodeId: 'b', portId: null);
+    expect(floating!.sourcePortId, isNull);
+  });
 }

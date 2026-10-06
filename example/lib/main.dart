@@ -9,6 +9,7 @@ import 'node_cards.dart';
 import 'scenarios.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   // En web evitamos el menú contextual del navegador para usar el nuestro.
   if (kIsWeb) BrowserContextMenu.disableContextMenu();
   runApp(const DemoApp());
@@ -349,11 +350,22 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final t = _theme;
     final wide = MediaQuery.sizeOf(context).width > 760;
+    // La paleta usa `pointerDragAnchorStrategy`: `details.offset` es la
+    // posición del puntero.
     final editor = DragTarget<String>(
+      onMove: (details) {
+        final state = _editorKey.currentState!;
+        state.showDropPreview(Rect.fromCenter(
+          center: state.globalToWorld(details.offset),
+          width: sizeFor(details.data).width,
+          height: sizeFor(details.data).height,
+        ));
+      },
+      onLeave: (_) => _editorKey.currentState?.showDropPreview(null),
       onAcceptWithDetails: (details) {
-        final world = _editorKey.currentState!
-            .globalToWorld(details.offset + const Offset(70, 18));
-        _addNode(details.data, world);
+        final state = _editorKey.currentState!;
+        state.showDropPreview(null);
+        _addNode(details.data, state.globalToWorld(details.offset));
       },
       builder: (context, _, __) => NodeEditor<Item>(
         key: _editorKey,
@@ -581,9 +593,23 @@ class _Sidebar extends StatelessWidget {
           for (final e in nodeTypeStyles.entries)
             Draggable<String>(
               data: e.key,
-              feedback: Material(
-                color: Colors.transparent,
-                child: _PaletteChip(style: e.value, theme: t, elevated: true),
+              // Horizontal: en táctil, arrastrar en vertical sigue haciendo
+              // scroll de la lista.
+              affinity: Axis.horizontal,
+              dragAnchorStrategy: pointerDragAnchorStrategy,
+              // Etiqueta pequeña junto al cursor; sobre el lienzo, el editor
+              // dibuja además la silueta del nodo donde caerá.
+              feedback: Transform.translate(
+                offset: const Offset(14, 14),
+                child: _DragPill(style: e.value, theme: t),
+              ),
+              childWhenDragging: Opacity(
+                opacity: 0.4,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                  child: _PaletteChip(style: e.value, theme: t),
+                ),
               ),
               child: Padding(
                 padding:
@@ -601,7 +627,13 @@ class _Sidebar extends StatelessWidget {
               'Rueda: zoom · Arrastrar fondo: mover\n'
               'Shift + arrastrar: selección múltiple\n'
               'Alt + soltar sobre nodo: asignar jefe/padre\n'
+              'Arrastrar un borde: redimensionar\n'
               'Arrastrar desde un puerto: conectar\n'
+              'Arrastrar una entrada conectada o el\n'
+              '   extremo de una conexión: moverla\n'
+              '   (soltar en el vacío: desconectar)\n'
+              'Ctrl + arrastrar salida: mover conexión\n'
+              'Alt + clic en puerto: romper conexiones\n'
               'Clic derecho / pulsación larga: menú\n'
               'Supr: eliminar · Ctrl+Z / Ctrl+Y\n'
               'Ctrl+D: duplicar · F: ajustar vista',
@@ -664,16 +696,45 @@ class _SideTile extends StatelessWidget {
   }
 }
 
+class _DragPill extends StatelessWidget {
+  const _DragPill({required this.style, required this.theme});
+
+  final NodeTypeStyle style;
+  final NodeEditorTheme theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: theme.nodeColor,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: style.color ?? theme.accentColor),
+          boxShadow: const [
+            BoxShadow(color: Color(0x40000000), blurRadius: 10)
+          ],
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.add, size: 14, color: style.color),
+          const SizedBox(width: 6),
+          Text(style.label ?? '',
+              style: theme.nodeTitleStyle.copyWith(fontSize: 12)),
+        ]),
+      ),
+    );
+  }
+}
+
 class _PaletteChip extends StatelessWidget {
   const _PaletteChip({
     required this.style,
     required this.theme,
-    this.elevated = false,
   });
 
   final NodeTypeStyle style;
   final NodeEditorTheme theme;
-  final bool elevated;
 
   @override
   Widget build(BuildContext context) {
@@ -684,9 +745,6 @@ class _PaletteChip extends StatelessWidget {
         color: theme.nodeColor,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: theme.nodeBorderColor),
-        boxShadow: elevated
-            ? const [BoxShadow(color: Color(0x33000000), blurRadius: 12)]
-            : null,
       ),
       child: Row(children: [
         Icon(style.icon, size: 18, color: style.color),

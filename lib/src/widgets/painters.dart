@@ -111,6 +111,18 @@ class InteractionState extends ChangeNotifier {
   Rect? marquee;
   Rect? dropTarget;
 
+  /// Conexión bajo el ratón.
+  String? hoverEdgeId;
+
+  /// Conexión cuyo extremo se está arrastrando.
+  String? reconnectingEdgeId;
+
+  /// Nodo que se está redimensionando.
+  String? resizingNodeId;
+
+  /// Vista previa de un elemento que se va a soltar (p. ej. desde una paleta).
+  Rect? dropPreview;
+
   void update() => notifyListeners();
 
   void clear() {
@@ -120,6 +132,8 @@ class InteractionState extends ChangeNotifier {
     connectValid = null;
     marquee = null;
     dropTarget = null;
+    reconnectingEdgeId = null;
+    resizingNodeId = null;
     notifyListeners();
   }
 }

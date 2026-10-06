@@ -50,6 +50,9 @@ class NodeEditorConfig {
     this.showPorts = true,
     this.marqueeOnEmptyDrag = false,
     this.doubleTapToFit = false,
+    this.enableNodeResize = true,
+    this.minNodeSize = const Size(72, 36),
+    this.enableEdgeEditing = true,
   });
 
   /// Sólo permite navegar y seleccionar.
@@ -98,6 +101,19 @@ class NodeEditorConfig {
   /// Doble toque en el fondo ajusta la vista.
   final bool doubleTapToFit;
 
+  /// Permite redimensionar nodos arrastrando sus bordes (ratón) o las
+  /// esquinas del nodo seleccionado (táctil). Usa `NodeEditor.canResize`
+  /// para vetarlo por nodo.
+  final bool enableNodeResize;
+
+  /// Tamaño mínimo al redimensionar desde la UI.
+  final Size minNodeSize;
+
+  /// Permite editar conexiones existentes: arrastrar sus extremos para
+  /// reconectarlas o soltarlas en el vacío para desconectarlas, y el botón
+  /// de borrar de la conexión seleccionada.
+  final bool enableEdgeEditing;
+
   NodeEditorConfig copyWith({
     bool? readOnly,
     bool? showGrid,
@@ -120,6 +136,9 @@ class NodeEditorConfig {
     bool? showPorts,
     bool? marqueeOnEmptyDrag,
     bool? doubleTapToFit,
+    bool? enableNodeResize,
+    Size? minNodeSize,
+    bool? enableEdgeEditing,
   }) {
     return NodeEditorConfig(
       readOnly: readOnly ?? this.readOnly,
@@ -144,6 +163,9 @@ class NodeEditorConfig {
       showPorts: showPorts ?? this.showPorts,
       marqueeOnEmptyDrag: marqueeOnEmptyDrag ?? this.marqueeOnEmptyDrag,
       doubleTapToFit: doubleTapToFit ?? this.doubleTapToFit,
+      enableNodeResize: enableNodeResize ?? this.enableNodeResize,
+      minNodeSize: minNodeSize ?? this.minNodeSize,
+      enableEdgeEditing: enableEdgeEditing ?? this.enableEdgeEditing,
     );
   }
 }
