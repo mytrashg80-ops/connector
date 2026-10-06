@@ -1,0 +1,348 @@
+import 'dart:math' as math;
+
+import 'package:flutter/painting.dart';
+
+import '../controller/node_editor_controller.dart';
+import '../geometry/edge_path.dart';
+import '../geometry/node_geometry.dart';
+import '../model/edge.dart';
+import '../model/port.dart';
+import '../theme/node_editor_theme.dart';
+
+class _CachedEdge {
+  _CachedEdge(
+      this.a, this.aSide, this.b, this.bSide, this.curve, this.geometry);
+  final Offset a;
+  final PortSide aSide;
+  final Offset b;
+  final PortSide bSide;
+  final EdgeCurve curve;
+  final EdgeGeometry geometry;
+  Path? dashed;
+}
+
+/// Pinta conexiones, enlaces de jerarquía y la vista simplificada (LOD) de
+/// los nodos. Cachea la geometría de cada conexión y sólo la recalcula cuando
+/// se mueve alguno de sus extremos.
+class SceneRenderer<T> {
+  SceneRenderer(this.controller);
+
+  NodeEditorController<T> controller;
+  NodeEditorTheme? _theme;
+  bool showHierarchyLinks = true;
+  Axis hierarchyAxis = Axis.vertical;
+  double labelMinScale = 0.45;
+
+  final Map<String, _CachedEdge> _edgeCache = {};
+  final Map<String, _CachedEdge> _hierarchyCache = {};
+  final Map<String, TextPainter> _labelCache = {};
+
+  final Paint _stroke = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round;
+  final Paint _fill = Paint();
+  final Paint _labelBorder = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1;
+
+  NodeEditorTheme get theme => _theme!;
+  NodeEditorTheme? get currentTheme => _theme;
+  set theme(NodeEditorTheme value) {
+    if (identical(_theme, value)) return;
+    _theme = value;
+    _edgeCache.clear();
+    _hierarchyCache.clear();
+    _disposeLabels();
+  }
+
+  void _disposeLabels() {
+    for (final tp in _labelCache.values) {
+      tp.dispose();
+    }
+    _labelCache.clear();
+  }
+
+  void dispose() => _disposeLabels();
+
+  /// `true` si hay conexiones animadas.
+  bool get hasAnimatedEdges => controller.edges.any((e) => e.animated);
+
+  // ------------------------------------------------------------- geometría
+
+  /// Extremo de una conexión: posición y lado por el que sale/entra.
+  (Offset, PortSide)? endpoint(EdgeData e, {required bool source}) {
+    final nodeId = source ? e.sourceNodeId : e.targetNodeId;
+    final otherId = source ? e.targetNodeId : e.sourceNodeId;
+    final portId = source ? e.sourcePortId : e.targetPortId;
+    final n = controller.node(nodeId);
+    if (n == null) return null;
+    final rect = controller.rectOf(nodeId);
+    if (portId != null) {
+      final port = n.port(portId);
+      if (port != null) {
+        final local = NodeGeometry.portLocalPosition(n, rect.size, portId,
+            topInset: theme.nodeHeaderHeight);
+        return (rect.topLeft + local, port.side);
+      }
+    }
+    final other = controller.rectOf(otherId);
+    return NodeGeometry.floatingAnchor(rect, other.center);
+  }
+
+  /// Geometría (cacheada) de una conexión.
+  EdgeGeometry? geometryOf(EdgeData e) {
+    final s = endpoint(e, source: true);
+    final t = endpoint(e, source: false);
+    if (s == null || t == null) return null;
+    final curve = e.curve ?? theme.edgeCurve;
+    final c = _edgeCache[e.id];
+    if (c != null &&
+        c.a == s.$1 &&
+        c.b == t.$1 &&
+        c.aSide == s.$2 &&
+        c.bSide == t.$2 &&
+        c.curve == curve) {
+      return c.geometry;
+    }
+    final g = buildEdgeGeometry(curve, s.$1, s.$2, t.$1, t.$2,
+        cornerRadius: theme.edgeCornerRadius);
+    _edgeCache[e.id] = _CachedEdge(s.$1, s.$2, t.$1, t.$2, curve, g);
+    return g;
+  }
+
+  EdgeGeometry _hierarchyGeometry(String childId, Rect parent, Rect child) {
+    final vertical = hierarchyAxis == Axis.vertical;
+    Offset a, b;
+    PortSide aSide, bSide;
+    if (vertical) {
+      final down =
+          child.top >= parent.bottom || child.center.dy >= parent.center.dy;
+      a = down ? parent.bottomCenter : parent.topCenter;
+      b = down ? child.topCenter : child.bottomCenter;
+      aSide = down ? PortSide.bottom : PortSide.top;
+      bSide = down ? PortSide.top : PortSide.bottom;
+    } else {
+      final right = child.center.dx >= parent.center.dx;
+      a = right ? parent.centerRight : parent.centerLeft;
+      b = right ? child.centerLeft : child.centerRight;
+      aSide = right ? PortSide.right : PortSide.left;
+      bSide = right ? PortSide.left : PortSide.right;
+    }
+    final curve = theme.hierarchyEdgeCurve;
+    final c = _hierarchyCache[childId];
+    if (c != null && c.a == a && c.b == b && c.curve == curve) {
+      return c.geometry;
+    }
+    final g = buildEdgeGeometry(curve, a, aSide, b, bSide,
+        cornerRadius: theme.edgeCornerRadius);
+    _hierarchyCache[childId] = _CachedEdge(a, aSide, b, bSide, curve, g);
+    return g;
+  }
+
+  /// Conexión visible más cercana a [world] dentro de [tolerance].
+  EdgeData? hitEdge(Offset world, double tolerance) {
+    EdgeData? best;
+    var bestD = tolerance;
+    for (final e in controller.edges) {
+      if (controller.isHidden(e.sourceNodeId) ||
+          controller.isHidden(e.targetNodeId)) {
+        continue;
+      }
+      final g = geometryOf(e);
+      if (g == null || !g.bounds.inflate(tolerance).contains(world)) continue;
+      final d = g.distanceTo(world);
+      if (d <= bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  void _purgeCaches() {
+    if (_edgeCache.length > controller.edgeCount * 2 + 64) {
+      _edgeCache.removeWhere((id, _) => controller.edge(id) == null);
+    }
+    if (_hierarchyCache.length > controller.nodeCount * 2 + 64) {
+      _hierarchyCache.removeWhere((id, _) => controller.node(id) == null);
+    }
+    if (_labelCache.length > 512) _disposeLabels();
+  }
+
+  // ------------------------------------------------------------- pintado
+
+  /// Pinta todo lo que cae dentro de [region] (coordenadas del mundo).
+  void paint(
+    Canvas canvas,
+    Rect region, {
+    required double scale,
+    required bool lod,
+    double dashPhase = 0,
+  }) {
+    _purgeCaches();
+    if (showHierarchyLinks) _paintHierarchy(canvas, region, lod);
+    _paintEdges(canvas, region, scale, lod, dashPhase);
+    if (lod) _paintLodNodes(canvas, region);
+  }
+
+  void _paintHierarchy(Canvas canvas, Rect region, bool lod) {
+    final t = theme;
+    _stroke
+      ..color = t.hierarchyEdgeColor
+      ..strokeWidth = lod ? t.hierarchyEdgeWidth * 1.5 : t.hierarchyEdgeWidth;
+    for (final n in controller.nodes) {
+      final pid = n.parentId;
+      if (pid == null) continue;
+      if (controller.node(pid) == null) continue;
+      if (controller.isHidden(n.id)) continue;
+      final pr = controller.rectOf(pid);
+      final cr = controller.rectOf(n.id);
+      if (!pr.expandToInclude(cr).inflate(32).overlaps(region)) continue;
+      final g = _hierarchyGeometry(n.id, pr, cr);
+      final accent = n.color ?? t.nodeTypes[n.type]?.color;
+      if (accent != null && !lod) {
+        _stroke.color = Color.lerp(t.hierarchyEdgeColor, accent, 0.45)!;
+      } else {
+        _stroke.color = t.hierarchyEdgeColor;
+      }
+      if (t.hierarchyEdgeDashed && !lod) {
+        final c = _hierarchyCache[n.id]!;
+        canvas.drawPath(
+            c.dashed ??= dashPath(g.path, t.edgeDashPattern), _stroke);
+      } else {
+        canvas.drawPath(g.path, _stroke);
+      }
+    }
+  }
+
+  void _paintEdges(
+      Canvas canvas, Rect region, double scale, bool lod, double phase) {
+    final t = theme;
+    final selectedNodes = controller.selectedNodeIds;
+    final showLabels = !lod && scale >= labelMinScale;
+    final labels = <(EdgeData, EdgeGeometry, Color)>[];
+    for (final e in controller.edges) {
+      if (controller.isHidden(e.sourceNodeId) ||
+          controller.isHidden(e.targetNodeId)) {
+        continue;
+      }
+      // Descarte barato antes de calcular la curva.
+      final sr = controller.rectOf(e.sourceNodeId);
+      final tr = controller.rectOf(e.targetNodeId);
+      if (!sr.expandToInclude(tr).inflate(260).overlaps(region)) continue;
+      final g = geometryOf(e);
+      if (g == null || !g.bounds.inflate(16).overlaps(region)) continue;
+
+      final selected = controller.isEdgeSelected(e.id) ||
+          selectedNodes.contains(e.sourceNodeId) ||
+          selectedNodes.contains(e.targetNodeId);
+      final color = selected
+          ? t.edgeSelectedColor
+          : (e.color ?? controller.sourcePortOf(e)?.color ?? t.edgeColor);
+      final width = (e.width ?? t.edgeWidth) *
+          (controller.isEdgeSelected(e.id) ? 1.5 : 1) *
+          (lod ? 1.5 : 1);
+      _stroke
+        ..color = color
+        ..strokeWidth = width;
+
+      final dashed = e.dashed ?? t.edgeDashed;
+      if (lod) {
+        canvas.drawPath(g.path, _stroke);
+      } else if (e.animated) {
+        canvas.drawPath(
+            dashPath(g.path, t.edgeDashPattern, phase: -phase), _stroke);
+      } else if (dashed) {
+        final c = _edgeCache[e.id]!;
+        canvas.drawPath(
+            c.dashed ??= dashPath(g.path, t.edgeDashPattern), _stroke);
+      } else {
+        canvas.drawPath(g.path, _stroke);
+      }
+
+      if (!lod && (e.arrow ?? t.edgeArrow)) {
+        _paintArrow(canvas, g, color, t.edgeArrowSize);
+      }
+      if (showLabels && e.label != null && e.label!.isNotEmpty) {
+        labels.add((e, g, color));
+      }
+    }
+    // Las etiquetas van por encima de todas las líneas.
+    for (final (e, g, color) in labels) {
+      _paintLabel(canvas, e, g, color);
+    }
+  }
+
+  void _paintArrow(Canvas canvas, EdgeGeometry g, Color color, double size) {
+    final tip = g.polyline.last;
+    final dir = g.endDirection;
+    final normal = Offset(-dir.dy, dir.dx);
+    final base = tip - dir * size;
+    final path = Path()
+      ..moveTo(tip.dx, tip.dy)
+      ..lineTo(
+          base.dx + normal.dx * size * 0.55, base.dy + normal.dy * size * 0.55)
+      ..lineTo(
+          base.dx - normal.dx * size * 0.55, base.dy - normal.dy * size * 0.55)
+      ..close();
+    _fill.color = color;
+    canvas.drawPath(path, _fill);
+  }
+
+  void _paintLabel(Canvas canvas, EdgeData e, EdgeGeometry g, Color color) {
+    final t = theme;
+    final tp = _labelCache.putIfAbsent(
+      e.label!,
+      () => TextPainter(
+        text: TextSpan(text: e.label, style: t.edgeLabelStyle),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+        ellipsis: '…',
+      )..layout(maxWidth: 220),
+    );
+    final pad = const EdgeInsets.symmetric(horizontal: 10, vertical: 4);
+    final w = tp.width + pad.horizontal;
+    final h = tp.height + pad.vertical;
+    final rect = Rect.fromCenter(center: g.labelPosition, width: w, height: h);
+    final rr = RRect.fromRectAndRadius(rect, Radius.circular(h / 2));
+    _fill.color = t.edgeLabelBackground;
+    canvas.drawRRect(rr, _fill);
+    _labelBorder.color =
+        controller.isEdgeSelected(e.id) ? color : t.edgeLabelBorderColor;
+    canvas.drawRRect(rr, _labelBorder);
+    tp.paint(canvas, rect.topLeft + Offset(pad.left, pad.top));
+  }
+
+  void _paintLodNodes(Canvas canvas, Rect region) {
+    final t = theme;
+    final ids = controller.queryNodes(region).toList()
+      ..sort((a, b) => controller.zOf(a).compareTo(controller.zOf(b)));
+    final radius = Radius.circular(math.max(t.nodeRadius, 6));
+    _stroke.strokeWidth = math.max(2, t.nodeBorderWidth * 2);
+    for (final id in ids) {
+      if (controller.isHidden(id)) continue;
+      final n = controller.node(id)!;
+      final rect = controller.rectOf(id);
+      final rr = RRect.fromRectAndRadius(rect, radius);
+      final accent = t.accentFor(n.type, n.color);
+      _fill.color = t.nodeTypes[n.type]?.backgroundColor ?? t.nodeColor;
+      canvas.drawRRect(rr, _fill);
+      // Banda superior con el color del tipo para distinguir nodos de lejos.
+      _fill.color = accent;
+      canvas.drawRRect(
+        RRect.fromRectAndCorners(
+          Rect.fromLTWH(
+              rect.left, rect.top, rect.width, math.min(rect.height, 14)),
+          topLeft: radius,
+          topRight: radius,
+        ),
+        _fill,
+      );
+      _stroke.color = controller.isNodeSelected(id)
+          ? t.nodeSelectedBorderColor
+          : t.nodeBorderColor;
+      canvas.drawRRect(rr, _stroke);
+    }
+  }
+}
