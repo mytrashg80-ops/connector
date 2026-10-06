@@ -372,7 +372,7 @@ final scenarios = <Scenario>[
     ('m32', 'Evaluar tiempos de entrega', 'm3'),
     ('m41', 'Lectores de código', 'm4'),
     ('m42', 'Alertas de reorden', 'm4'),
-    ('m43', 'Este editor de nodos 🙂', 'm4'),
+    ('m43', 'Este editor de nodos', 'm4'),
   ];
   const palette = [
     Color(0xFFEF4444),

@@ -19,3 +19,14 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Roboto incluida para que la web no dependa de fonts.gstatic.com.
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-400.ttf
+        - asset: assets/fonts/Roboto-500.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-600.ttf
+          weight: 600
+        - asset: assets/fonts/Roboto-700.ttf
+          weight: 700
