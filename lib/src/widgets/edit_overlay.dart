@@ -7,6 +7,7 @@ import '../controller/node_editor_controller.dart';
 import '../geometry/edge_path.dart';
 import '../model/edge.dart';
 import '../model/node.dart';
+import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
 import 'painters.dart';
 import 'scene_renderer.dart';
@@ -21,6 +22,25 @@ abstract final class EditHandles {
 
   /// Máximo de conexiones seleccionadas que muestran tiradores.
   static const int maxEdgeHandles = 24;
+
+  /// Radio (en pantalla) de los tiradores para crear conectores.
+  static const double connectorHandleRadius = 6;
+
+  /// Distancia (en pantalla) del borde del nodo al centro de su tirador.
+  static const double connectorHandleGap = 13;
+
+  /// Tiradores para crear conectores de un nodo: uno por lado, justo fuera
+  /// del borde (así no se confunden con redimensionar; si coinciden con un
+  /// puerto gana el más cercano al puntero).
+  static List<(PortSide, Offset)> connectorHandles(Rect r, double scale) {
+    final g = connectorHandleGap / scale;
+    return [
+      (PortSide.top, r.topCenter - Offset(0, g)),
+      (PortSide.right, r.centerRight + Offset(g, 0)),
+      (PortSide.bottom, r.bottomCenter + Offset(0, g)),
+      (PortSide.left, r.centerLeft - Offset(g, 0)),
+    ];
+  }
 
   /// La única conexión `(edge, null)` o enlace de jerarquía `(null, hijo)`
   /// seleccionado, si no hay nada más seleccionado.
@@ -63,6 +83,7 @@ class EditOverlayPainter<T> extends CustomPainter {
     required this.nodeResize,
     required this.labelMinScale,
     required this.canResize,
+    this.connectorHandleNodes = const [],
     Listenable? effects,
   }) : super(
           repaint: Listenable.merge([
@@ -83,6 +104,10 @@ class EditOverlayPainter<T> extends CustomPainter {
   final bool nodeResize;
   final double labelMinScale;
   final bool Function(NodeData<T> node) canResize;
+
+  /// Nodos que muestran tiradores para crear conectores (además del que
+  /// está bajo el ratón, que viene en [state]).
+  final List<String> connectorHandleNodes;
 
   static final Paint _fill = Paint();
   static final Paint _stroke = Paint()
@@ -106,6 +131,7 @@ class EditOverlayPainter<T> extends CustomPainter {
       _paintSingleDelete(canvas, s);
     }
     if (nodeResize) _paintResize(canvas, s);
+    _paintConnectorHandles(canvas, s);
     _paintGuides(canvas, s);
 
     canvas.restore();
@@ -121,6 +147,36 @@ class EditOverlayPainter<T> extends CustomPainter {
       ..strokeWidth = 1.5 / s
       ..color = theme.connectionPreviewColor;
     canvas.drawPath(dashPath(Path()..addRRect(rr), [6 / s, 4 / s]), _stroke);
+  }
+
+  void _paintConnectorHandles(Canvas canvas, double s) {
+    if (state.handlesHidden) return;
+    final ids = <String>{
+      ...connectorHandleNodes,
+      if (state.handleNodeId != null) state.handleNodeId!,
+    };
+    for (final id in ids) {
+      if (!controller.containsNode(id) || controller.isHidden(id)) continue;
+      final rect = renderer.rectOf(id);
+      for (final (side, c) in EditHandles.connectorHandles(rect, s)) {
+        final hot = state.handleNodeId == id && state.hoverHandle == side;
+        final r = EditHandles.connectorHandleRadius * (hot ? 1.3 : 1) / s;
+        _fill.color = hot ? theme.accentColor : theme.nodeColor;
+        canvas.drawCircle(c, r, _fill);
+        _stroke
+          ..color = theme.accentColor
+          ..strokeWidth = 1.5 / s;
+        canvas.drawCircle(c, r, _stroke);
+        // "+"
+        final arm = r * 0.5;
+        _stroke
+          ..color = hot ? theme.nodeColor : theme.accentColor
+          ..strokeWidth = 1.6 / s;
+        canvas
+          ..drawLine(c - Offset(arm, 0), c + Offset(arm, 0), _stroke)
+          ..drawLine(c - Offset(0, arm), c + Offset(0, arm), _stroke);
+      }
+    }
   }
 
   void _paintHover(Canvas canvas, double s) {
@@ -319,5 +375,6 @@ class EditOverlayPainter<T> extends CustomPainter {
       old.edgeEditing != edgeEditing ||
       old.nodeResize != nodeResize ||
       old.labelMinScale != labelMinScale ||
-      old.canResize != canResize;
+      old.canResize != canResize ||
+      !listEquals(old.connectorHandleNodes, connectorHandleNodes);
 }

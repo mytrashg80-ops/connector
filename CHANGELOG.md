@@ -1,3 +1,21 @@
+## 0.5.0
+
+- **Crear conectores de cualquier tipo desde la UI:** tiradores **+** en los
+  lados del nodo bajo el ratón o del seleccionado (también en táctil).
+  Arrastrar uno hasta otro nodo crea un enlace de jerarquía padre → hijo o
+  una conexión, con o sin puertos (`NodeEditorConfig.connectorHandles`,
+  `NodeEditorConfig.newConnector`).
+- Nuevo `ConnectorStyle` / `ConnectorKind` (`ConnectorStyle.hierarchy`):
+  curva, color, grosor, discontinua, flecha, animada y etiqueta de los
+  conectores nuevos. `NodeEditorController.connect(style:)`.
+- La jerarquía creada así se valida (ciclos, `canReparent`), avisa por
+  `onParentChanged` y explica el rechazo en `onConnectionRejected`.
+- `ConnectionDropDetails.style` dice qué conector se soltó en el vacío.
+- Las conexiones desde puertos usan el estilo de `newConnector`.
+- Ejemplo: selector "Conector" en la barra (jerarquía, flujo, ortogonal,
+  recta, discontinua, animada). Soltar en el vacío crea un hijo o un nodo
+  conectado según el tipo.
+
 ## 0.4.0
 
 - **Animaciones opcionales** (`NodeEditorConfig.animations`,

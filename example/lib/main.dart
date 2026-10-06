@@ -68,6 +68,41 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
   int _scenario = 0;
   bool _snap = false;
   bool _animate = true;
+  int _connector = 0;
+
+  /// Tipos de conector que se crean al arrastrar desde el "+" de un nodo.
+  static const _connectors = <(String, IconData, ConnectorStyle)>[
+    (
+      'Jerarquía (padre → hijo)',
+      Icons.account_tree_outlined,
+      ConnectorStyle.hierarchy
+    ),
+    (
+      'Flujo con flecha',
+      Icons.trending_flat,
+      ConnectorStyle(curve: EdgeCurve.bezier, arrow: true)
+    ),
+    (
+      'Ortogonal',
+      Icons.turn_right,
+      ConnectorStyle(curve: EdgeCurve.smoothStep, arrow: true)
+    ),
+    (
+      'Recta',
+      Icons.horizontal_rule,
+      ConnectorStyle(curve: EdgeCurve.straight, arrow: true)
+    ),
+    (
+      'Discontinua',
+      Icons.more_horiz,
+      ConnectorStyle(curve: EdgeCurve.bezier, dashed: true, arrow: true)
+    ),
+    (
+      'Flujo animado',
+      Icons.animation,
+      ConnectorStyle(curve: EdgeCurve.bezier, animated: true, arrow: true)
+    ),
+  ];
 
   Scenario get scenario => scenarios[_scenario];
 
@@ -84,8 +119,12 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
   }
 
   Future<void> _load(int index) async {
-    setState(() => _scenario = index);
     final (nodes, edges) = scenarios[index].build();
+    setState(() {
+      _scenario = index;
+      // Jerarquías → enlaces padre/hijo; cadenas → conexiones de flujo.
+      _connector = edges.isEmpty ? 0 : 1;
+    });
     controller
       ..clear()
       ..addNodes(nodes)
@@ -201,13 +240,7 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
         await _rename(node);
       case 'child':
         final r = controller.rectOf(node.id);
-        final type = switch (node.type) {
-          'company' => 'region',
-          'region' => 'branch',
-          'branch' => 'warehouse',
-          'category' => 'product',
-          final t => t,
-        };
+        final type = _childTypeOf(node.type);
         final pos = scenario.hierarchyAxis == Axis.vertical
             ? r.bottomCenter + Offset(0, 60 + sizeFor(type).height / 2)
             : r.centerRight + Offset(80 + sizeFor(type).width / 2, 0);
@@ -315,8 +348,21 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
     if (type != null) _addNode(type, world);
   }
 
-  /// Soltar una conexión en el vacío crea un nodo nuevo ya conectado.
+  String _childTypeOf(String? type) => switch (type) {
+        'company' => 'region',
+        'region' => 'branch',
+        'branch' => 'warehouse',
+        'category' => 'product',
+        final t => t ?? 'employee',
+      };
+
+  /// Soltar una conexión en el vacío crea un nodo nuevo ya conectado (o un
+  /// hijo, si el conector es de jerarquía).
   void _onConnectionDropped(ConnectionDropDetails<Item> d) {
+    if (d.style.isHierarchy) {
+      _addNode(_childTypeOf(d.node.type), d.worldPosition, parentId: d.node.id);
+      return;
+    }
     final port = d.port;
     final type = switch (d.node.type) {
       'part' => 'station',
@@ -336,6 +382,7 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
           sourcePortId: port?.id,
           targetNodeId: id,
           targetPortId: target?.id,
+          style: d.style,
         );
       } else {
         final source = created.ports.where((p) => p.canSend).firstOrNull;
@@ -344,6 +391,7 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
           sourcePortId: source?.id,
           targetNodeId: d.node.id,
           targetPortId: port.id,
+          style: d.style,
         );
       }
     });
@@ -418,6 +466,7 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
           animations: _animate
               ? const NodeEditorAnimations()
               : NodeEditorAnimations.none,
+          newConnector: _connectors[_connector].$3,
         ),
         nodeBuilder: buildNodeCard,
         onNodeDoubleTap: _rename,
@@ -509,6 +558,29 @@ class _TopBar extends StatelessWidget {
               page.scenario.name,
               style: t.nodeTitleStyle.copyWith(fontSize: 15),
               overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          PopupMenuButton<int>(
+            tooltip: 'Tipo de conector que se crea con el "+" de cada nodo',
+            initialValue: page._connector,
+            // ignore: invalid_use_of_protected_member
+            onSelected: (i) => page.setState(() => page._connector = i),
+            itemBuilder: (context) => [
+              for (var i = 0; i < _EditorPageState._connectors.length; i++)
+                PopupMenuItem(
+                  value: i,
+                  child: _MenuRow(_EditorPageState._connectors[i].$2,
+                      _EditorPageState._connectors[i].$1),
+                ),
+            ],
+            child: IgnorePointer(
+              child: _BarButton(
+                icon: _EditorPageState._connectors[page._connector].$2,
+                label:
+                    'Conector: ${_EditorPageState._connectors[page._connector].$1}',
+                theme: t,
+                onTap: () {},
+              ),
             ),
           ),
           _BarButton(
@@ -681,6 +753,8 @@ class _Sidebar extends StatelessWidget {
               'Arrastrar un borde: redimensionar\n'
               'Al arrastrar se muestran guías de\n'
               '   alineación (Ctrl: sin imán)\n'
+              'Arrastrar el "+" de un nodo hasta otro:\n'
+              '   crear conector (tipo en la barra)\n'
               'Arrastrar desde un puerto: conectar\n'
               'Arrastrar una línea: cambiar su trazado\n'
               '   (de vuelta a su sitio: recta)\n'

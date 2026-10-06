@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../layout/graph_layout.dart';
 import '../model/connection.dart';
+import '../model/connector_style.dart';
 import '../model/edge.dart';
 import '../model/node.dart';
 import '../model/port.dart';
@@ -777,6 +778,7 @@ class NodeEditorController<T> extends ChangeNotifier {
     String? label,
     EdgeCurve? curve,
     bool animated = false,
+    ConnectorStyle? style,
   }) {
     final check = checkConnection(
       sourceNodeId: sourceNodeId,
@@ -785,16 +787,20 @@ class NodeEditorController<T> extends ChangeNotifier {
       targetPortId: targetPortId,
     );
     if (!check.isValid) return null;
-    final e = EdgeData(
-      id: id ?? generateId('e'),
-      sourceNodeId: sourceNodeId,
-      sourcePortId: sourcePortId,
-      targetNodeId: targetNodeId,
-      targetPortId: targetPortId,
-      label: label,
-      curve: curve,
-      animated: animated,
-    );
+    final base = style ?? const ConnectorStyle();
+    final e = base
+        .toEdge(
+          id: id ?? generateId('e'),
+          sourceNodeId: sourceNodeId,
+          sourcePortId: sourcePortId,
+          targetNodeId: targetNodeId,
+          targetPortId: targetPortId,
+        )
+        .copyWith(
+          label: label,
+          curve: curve,
+          animated: animated || base.animated,
+        );
     addEdge(e);
     return e;
   }

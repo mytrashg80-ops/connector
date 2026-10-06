@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import '../controller/node_editor_controller.dart';
 import '../geometry/edge_path.dart';
 import '../geometry/node_geometry.dart';
+import '../model/connector_style.dart';
 import '../model/edge.dart';
 import '../model/node.dart';
 import '../model/port.dart';
@@ -268,6 +269,8 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   String? _connectTargetNode;
   NodePort? _connectTargetPort;
   String? _connectInvalidReason;
+  // Qué se está creando (conexión o enlace de jerarquía) y con qué estilo.
+  ConnectorStyle _connectStyle = const ConnectorStyle();
   // Pinch
   double _pinchDist = 0;
   Offset _pinchFocal = Offset.zero;
@@ -749,6 +752,45 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     return best;
   }
 
+  bool get _connectorHandlesOn =>
+      !_readOnly && widget.config.connectorHandles && !_lod;
+
+  /// Nodos que muestran tiradores aunque el ratón no esté encima: el único
+  /// seleccionado (así también funcionan en pantallas táctiles).
+  List<String> get _selectedHandleNodes {
+    if (!_connectorHandlesOn) return const [];
+    final sel = _c.selectedNodeIds;
+    if (sel.length != 1) return const [];
+    final id = sel.first;
+    return _c.isHidden(id) ? const [] : [id];
+  }
+
+  /// Tirador de conector bajo [world].
+  ({String nodeId, PortSide side, Offset position})? _hitConnectorHandle(
+      Offset world) {
+    if (!_connectorHandlesOn || _interaction.handlesHidden) return null;
+    final s = _c.viewport.scale;
+    final tol = (EditHandles.connectorHandleRadius + 4) / s;
+    final ids = <String>{
+      ..._selectedHandleNodes,
+      if (_interaction.handleNodeId != null) _interaction.handleNodeId!,
+    };
+    ({String nodeId, PortSide side, Offset position})? best;
+    var bestD = tol;
+    for (final id in ids) {
+      if (!_c.containsNode(id) || _c.isHidden(id)) continue;
+      for (final (side, c)
+          in EditHandles.connectorHandles(_renderer.rectOf(id), s)) {
+        final d = (c - world).distance;
+        if (d <= bestD) {
+          bestD = d;
+          best = (nodeId: id, side: side, position: c);
+        }
+      }
+    }
+    return best;
+  }
+
   bool _canResize(NodeData<T> n) =>
       widget.config.enableNodeResize &&
       !n.locked &&
@@ -935,7 +977,24 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         }
         return;
       }
-      final port = _hitPort(world);
+      final handle = _hitConnectorHandle(world);
+      final portHit = _hitPort(world);
+      if (handle != null &&
+          (portHit == null ||
+              (handle.position - world).distance <
+                  (portHit.position - world).distance)) {
+        // Tirador (+): crea un conector del tipo elegido, con o sin puertos.
+        final rect = _c.rectOf(handle.nodeId);
+        final anchor = switch (handle.side) {
+          PortSide.top => rect.topCenter,
+          PortSide.right => rect.centerRight,
+          PortSide.bottom => rect.bottomCenter,
+          PortSide.left => rect.centerLeft,
+        };
+        _startConnection(handle.nodeId, null, anchor, side: handle.side);
+        return;
+      }
+      final port = portHit;
       if (port != null) {
         final existing = _lastEdgeAt(port.nodeId, port.port);
         if (existing != null && _alt) {
@@ -1058,6 +1117,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       if ((e.localPosition - _downLocal).distance < _slop) return;
       _moved = true;
       _cancelLongPress();
+      _interaction.handlesHidden = true;
       if (_mode == _Mode.dragNodes) _beginDrag();
       if (_mode == _Mode.resize) _beginResize();
       if (_reconnect != null) _liftReconnecting();
@@ -1450,17 +1510,27 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
 
   // ------------------------------------------------------------- conexión
 
-  void _startConnection(String nodeId, NodePort port, Offset position) {
+  /// Empieza a tirar una línea desde [nodeId]: desde un puerto, o desde un
+  /// tirador (+) si [port] es `null`.
+  void _startConnection(String nodeId, NodePort? port, Offset position,
+      {PortSide? side}) {
+    final template = widget.config.newConnector;
     _mode = _Mode.connect;
     _connectNode = nodeId;
     _connectPort = port;
+    // Los puertos son de datos: desde ellos siempre sale una conexión.
+    _connectStyle = port != null && template.isHierarchy
+        ? const ConnectorStyle()
+        : template;
     _interaction
       ..connectFrom = position
-      ..connectFromSide = port.side
+      ..connectFromSide = port?.side ?? side ?? PortSide.right
       // Arrastrar desde una entrada dibuja la línea "hacia atrás".
-      ..connectReversed = !port.canSend
+      ..connectReversed = port != null && !port.canSend
       ..connectTo = position
-      ..connectCurve = _theme.edgeCurve
+      ..connectCurve = _connectStyle.isHierarchy
+          ? _theme.hierarchyEdgeCurve
+          : _connectStyle.curve ?? _theme.edgeCurve
       ..update();
   }
 
@@ -1519,26 +1589,33 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
               tPort: otherPort?.id
             );
     }
-    final reversed = !_connectPort!.canSend ||
-        (_connectPort!.direction == PortDirection.both &&
-            otherPort != null &&
-            !otherPort.canReceive);
+    final from = _connectPort;
+    final reversed = from != null &&
+        (!from.canSend ||
+            (from.direction == PortDirection.both &&
+                otherPort != null &&
+                !otherPort.canReceive));
     return reversed
         ? (
             sNode: otherNode,
             sPort: otherPort?.id,
             tNode: _connectNode!,
-            tPort: _connectPort!.id
+            tPort: from.id
           )
         : (
             sNode: _connectNode!,
-            sPort: _connectPort!.id,
+            sPort: from?.id,
             tNode: otherNode,
             tPort: otherPort?.id
           );
   }
 
   void _updateConnection(Offset world) {
+    if (_reconnect == null && _connectStyle.isHierarchy) {
+      _updateHierarchyConnection(world);
+      return;
+    }
+    _interaction.dropTarget = null;
     final hit = _hitPort(world,
         excludeNode: _c.allowSelfConnections ? null : _connectNode);
     _connectTargetNode = null;
@@ -1560,9 +1637,12 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         ..connectToSide = hit.port.side
         ..connectValid = check.isValid;
     } else {
-      // Nodo sin puertos bajo el puntero → conexión flotante.
+      // Nodo sin puertos (o línea que sale de un tirador) bajo el puntero →
+      // conexión flotante a ese nodo.
       final n = _c.nodeAt(world);
-      if (n != null && n.id != _connectNode && n.ports.isEmpty) {
+      final floating = n != null &&
+          (n.ports.isEmpty || (_connectPort == null && _reconnect == null));
+      if (floating && (n.id != _connectNode || _c.allowSelfConnections)) {
         final o = _orient(n.id, null);
         final check = _c.checkConnection(
             sourceNodeId: o.sNode,
@@ -1572,15 +1652,59 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
             ignoreEdgeId: _reconnect?.id);
         _connectTargetNode = n.id;
         _connectInvalidReason = check.reason;
-        _interaction.connectValid = check.isValid;
+        final rect = _c.rectOf(n.id);
+        final (at, side) =
+            NodeGeometry.floatingAnchor(rect, _interaction.connectFrom!);
+        _interaction
+          ..connectValid = check.isValid
+          ..connectTo = at
+          ..connectToSide = side
+          ..dropTarget = _connectPort == null ? rect : null;
       } else {
-        _interaction.connectValid = null;
+        _interaction
+          ..connectValid = null
+          ..connectTo = world
+          ..connectToSide = null;
       }
-      _interaction
-        ..connectTo = world
-        ..connectToSide = null;
     }
     _interaction.update();
+  }
+
+  /// Tirando un enlace de jerarquía: el nodo de destino será hijo del de
+  /// origen.
+  void _updateHierarchyConnection(Offset world) {
+    final parent = _connectNode!;
+    final n = _c.nodeAt(world);
+    _connectTargetNode = null;
+    _connectInvalidReason = null;
+    if (n == null || n.id == parent) {
+      _interaction
+        ..connectValid = null
+        ..connectTo = world
+        ..connectToSide = null
+        ..dropTarget = null
+        ..update();
+      return;
+    }
+    String? reason;
+    if (n.parentId == parent) {
+      reason = 'Ya depende de este nodo';
+    } else if (!_c.canSetParent(n.id, parent)) {
+      reason = 'Crearía un ciclo en la jerarquía';
+    } else if (!(widget.canReparent?.call(n, _c.node(parent)!) ?? true)) {
+      reason = 'Esta relación no está permitida';
+    }
+    _connectTargetNode = n.id;
+    _connectInvalidReason = reason;
+    final rect = _c.rectOf(n.id);
+    final (at, side) =
+        NodeGeometry.floatingAnchor(rect, _interaction.connectFrom!);
+    _interaction
+      ..connectValid = reason == null
+      ..connectTo = at
+      ..connectToSide = side
+      ..dropTarget = reason == null ? rect : null
+      ..update();
   }
 
   void _finishConnection(Offset world, Offset global) {
@@ -1592,6 +1716,10 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     if (targetNode != null) {
       if (_connectInvalidReason != null) {
         widget.onConnectionRejected?.call(_connectInvalidReason!);
+      } else if (_connectStyle.isHierarchy) {
+        if (_c.setParent(targetNode, _connectNode!)) {
+          widget.onParentChanged?.call(targetNode, _connectNode);
+        }
       } else {
         final o = _orient(targetNode, _connectTargetPort);
         final e = _c.connect(
@@ -1599,6 +1727,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
           sourcePortId: o.sPort,
           targetNodeId: o.tNode,
           targetPortId: o.tPort,
+          style: _connectStyle,
         );
         if (e != null) widget.onConnect?.call(e);
       }
@@ -1610,6 +1739,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
           port: _connectPort,
           worldPosition: world,
           globalPosition: global,
+          style: _connectStyle,
         ));
       }
     }
@@ -1810,6 +1940,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     _connectTargetNode = null;
     _connectTargetPort = null;
     _connectInvalidReason = null;
+    _connectStyle = const ConnectorStyle();
     _interaction.clear();
   }
 
@@ -1822,6 +1953,34 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     if (_mode != _Mode.none) return;
     _cursor.value = SystemMouseCursors.basic;
     _setHover(null, null);
+    _setHandleHover(null, null);
+  }
+
+  void _setHandleHover(String? nodeId, PortSide? side) {
+    if (_interaction.handleNodeId == nodeId &&
+        _interaction.hoverHandle == side) {
+      return;
+    }
+    _interaction
+      ..handleNodeId = nodeId
+      ..hoverHandle = side
+      ..update();
+  }
+
+  /// Nodo cuyos tiradores se muestran con el ratón en [world]: el que está
+  /// debajo, o el que ya los mostraba mientras el ratón siga cerca (para
+  /// poder llegar a los tiradores, que están fuera del nodo).
+  String? _handleNodeAt(Offset world) {
+    if (!_connectorHandlesOn) return null;
+    final under = _c.nodeAt(world);
+    if (under != null) return under.id;
+    final current = _interaction.handleNodeId;
+    if (current == null || !_c.containsNode(current)) return null;
+    final reach = (EditHandles.connectorHandleGap +
+            EditHandles.connectorHandleRadius +
+            6) /
+        _c.viewport.scale;
+    return _c.rectOf(current).inflate(reach).contains(world) ? current : null;
   }
 
   void _setHover(String? edgeId, String? linkId) {
@@ -1839,6 +1998,21 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   void _updateHover(Offset local, PointerDeviceKind kind) {
     if (kind == PointerDeviceKind.touch || _mode != _Mode.none) return;
     final world = _c.viewport.toWorld(local);
+    var handle = _hitConnectorHandle(world);
+    if (handle != null && !_readOnly) {
+      final port = _hitPort(world);
+      if (port != null &&
+          (port.position - world).distance <
+              (handle.position - world).distance) {
+        handle = null;
+      }
+    }
+    _setHandleHover(handle?.nodeId ?? _handleNodeAt(world), handle?.side);
+    if (handle != null) {
+      _cursor.value = SystemMouseCursors.precise;
+      _setHover(null, null);
+      return;
+    }
     MouseCursor cursor = SystemMouseCursors.basic;
     var hover = _interaction.hoverEdgeId;
     var hoverLink = _interaction.hoverLinkId;
@@ -2125,6 +2299,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
                         nodeResize: !_readOnly && config.enableNodeResize,
                         labelMinScale: config.labelMinScale,
                         canResize: _canResize,
+                        connectorHandleNodes: _selectedHandleNodes,
                         effects: _fxOn ? _fx : null,
                       ),
                     ),

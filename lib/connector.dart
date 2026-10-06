@@ -12,6 +12,7 @@ export 'src/geometry/node_geometry.dart';
 export 'src/layout/graph_layout.dart';
 export 'src/layout/layouts.dart';
 export 'src/model/connection.dart';
+export 'src/model/connector_style.dart';
 export 'src/model/edge.dart';
 export 'src/model/node.dart';
 export 'src/model/port.dart';

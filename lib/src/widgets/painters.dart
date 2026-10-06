@@ -124,6 +124,14 @@ class InteractionState extends ChangeNotifier {
   /// Enlace de jerarquía (id del hijo) cuyo extremo se está arrastrando.
   String? reconnectingLinkId;
 
+  /// Nodo bajo el ratón que muestra sus tiradores de conector, y el
+  /// tirador concreto bajo el ratón.
+  String? handleNodeId;
+  PortSide? hoverHandle;
+
+  /// Oculta los tiradores durante un gesto.
+  bool handlesHidden = false;
+
   /// Guías de alineación visibles.
   List<AlignmentGuide> guides = const [];
 
@@ -146,6 +154,7 @@ class InteractionState extends ChangeNotifier {
     reconnectingLinkId = null;
     resizingNodeId = null;
     guides = const [];
+    handlesHidden = false;
     notifyListeners();
   }
 }

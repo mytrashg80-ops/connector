@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import '../model/connector_style.dart';
 import '../model/node.dart';
 import '../model/port.dart';
 
@@ -56,6 +57,8 @@ class NodeEditorConfig {
     this.enableAlignmentGuides = true,
     this.alignmentSnapDistance = 6,
     this.animations = const NodeEditorAnimations(),
+    this.connectorHandles = true,
+    this.newConnector = const ConnectorStyle(),
   });
 
   /// Sólo permite navegar y seleccionar.
@@ -130,6 +133,16 @@ class NodeEditorConfig {
   /// desactivarlas todas.
   final NodeEditorAnimations animations;
 
+  /// Muestra tiradores (+) en los lados del nodo bajo el ratón o del nodo
+  /// seleccionado. Arrastrar uno hasta otro nodo crea un conector del tipo
+  /// [newConnector], aunque los nodos no tengan puertos.
+  final bool connectorHandles;
+
+  /// Qué se crea al tirar una línea desde un tirador: una conexión (con su
+  /// curva, color, flecha…) o un enlace de jerarquía padre → hijo. Las
+  /// conexiones que salen de un puerto también usan su estilo visual.
+  final ConnectorStyle newConnector;
+
   NodeEditorConfig copyWith({
     bool? readOnly,
     bool? showGrid,
@@ -158,6 +171,8 @@ class NodeEditorConfig {
     bool? enableAlignmentGuides,
     double? alignmentSnapDistance,
     NodeEditorAnimations? animations,
+    bool? connectorHandles,
+    ConnectorStyle? newConnector,
   }) {
     return NodeEditorConfig(
       readOnly: readOnly ?? this.readOnly,
@@ -190,6 +205,8 @@ class NodeEditorConfig {
       alignmentSnapDistance:
           alignmentSnapDistance ?? this.alignmentSnapDistance,
       animations: animations ?? this.animations,
+      connectorHandles: connectorHandles ?? this.connectorHandles,
+      newConnector: newConnector ?? this.newConnector,
     );
   }
 }
@@ -413,6 +430,7 @@ class ConnectionDropDetails<T> {
     required this.port,
     required this.worldPosition,
     required this.globalPosition,
+    this.style = const ConnectorStyle(),
   });
 
   /// Nodo desde el que se arrastró.
@@ -420,4 +438,8 @@ class ConnectionDropDetails<T> {
   final NodePort? port;
   final Offset worldPosition;
   final Offset globalPosition;
+
+  /// Tipo de conector que se estaba creando (p. ej. para crear un hijo si es
+  /// [ConnectorKind.hierarchy] o una conexión si es [ConnectorKind.edge]).
+  final ConnectorStyle style;
 }

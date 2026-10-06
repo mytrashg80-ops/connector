@@ -26,6 +26,7 @@ dependencias aparte de Flutter.
 | **Nodos** | Cualquier widget como cuerpo (`nodeBuilder`), tarjeta por defecto, tamaño fijo o `autoSize`, bloqueo, colores por tipo |
 | **Puertos** | Entrada/salida/ambos, en los 4 lados, con etiqueta, tipo lógico para validar compatibilidad y máximo de conexiones |
 | **Conexiones** | Bézier, ortogonal redondeada, ortogonal, recta. Etiquetas, flechas, trazo discontinuo, flujo animado. Conexiones "flotantes" sin puertos |
+| **Crear conectores** | Cada nodo muestra tiradores **+** en sus lados (al pasar el ratón o al seleccionarlo, también en táctil). Arrastra uno hasta otro nodo para crear un enlace de jerarquía padre → hijo o una conexión de cualquier estilo (curva, ortogonal, recta, discontinua, animada, con flecha, color, grosor, etiqueta), con o sin puertos |
 | **Editar conexiones** | Conexiones y enlaces de jerarquía se seleccionan igual: resaltado al pasar el ratón, arrastrar un extremo para reconectar (o soltarlo en el vacío para desconectar), botón × en la línea seleccionada, Alt + clic en un puerto para romper sus conexiones |
 | **Trazado** | Arrastra cualquier línea para que pase por otro sitio (p. ej. para sacarla de debajo de un nodo). El punto de paso acompaña a los nodos al moverlos; llévala de vuelta a su sitio para enderezarla |
 | **Guías de alineación** | Al arrastrar o redimensionar, los bordes y centros se alinean con los de los nodos visibles y se dibujan guías. Ctrl/⌘ lo desactiva mientras se mantiene |
@@ -200,7 +201,8 @@ final temaOscuro = NodeEditorTheme.dark(
 `lodScale`, `labelMinScale`, `cullMargin`, `showHierarchyLinks`,
 `hierarchyAxis`, `enableKeyboardShortcuts`, `marqueeOnEmptyDrag`,
 `enableNodeResize`, `minNodeSize`, `enableEdgeEditing`,
-`enableAlignmentGuides`, `alignmentSnapDistance`, `animations`...
+`enableAlignmentGuides`, `alignmentSnapDistance`, `animations`,
+`connectorHandles`, `newConnector`...
 
 Callbacks del widget: `onNodeTap`, `onNodeDoubleTap`, `onNodeContextMenu`,
 `onEdgeTap`, `onEdgeContextMenu`, `onCanvasTap`, `onCanvasContextMenu`,
@@ -217,6 +219,38 @@ pulsar × / Supr lo rompe. Cada cambio llega por `onParentChanged` (con
 
 `AlignmentSnapper` (exportado) es el motor de las guías por si quieres usarlo
 en tus propias herramientas.
+
+### Crear conectores
+
+Con `connectorHandles` (activado por defecto) el nodo bajo el ratón, o el
+nodo seleccionado, muestra un tirador **+** en cada lado. Al arrastrarlo
+hasta otro nodo se crea lo que diga `newConnector`:
+
+```dart
+NodeEditorConfig(
+  // Enlace de jerarquía: el nodo de destino pasa a ser hijo del de origen.
+  newConnector: ConnectorStyle.hierarchy,
+  // O una conexión con el estilo que quieras:
+  // newConnector: const ConnectorStyle(
+  //   curve: EdgeCurve.smoothStep, dashed: true, arrow: true,
+  //   color: Colors.teal, width: 2, animated: false, label: 'envío'),
+)
+```
+
+* **Jerarquía:** se valida igual que el resto (sin ciclos, `canReparent`) y
+  avisa por `onParentChanged`. Si no es válida, la línea se pone roja y
+  `onConnectionRejected` recibe el motivo.
+* **Conexión:** se puede soltar sobre el cuerpo de cualquier nodo (conexión
+  flotante, sin puertos) o sobre un puerto. Las conexiones que se arrastran
+  desde un puerto también usan el estilo de `newConnector` (si éste es de
+  jerarquía, desde un puerto sale una conexión normal). Avisa por
+  `onConnect`.
+* **Soltar en el vacío:** llega a `onConnectionDropped`, cuyo
+  `details.style` dice qué se estaba creando (p. ej. para crear un hijo o un
+  nodo ya conectado).
+
+Por código: `controller.connect(..., style: ConnectorStyle(...))` y
+`controller.setParent(hijo, padre)`.
 
 ### Animaciones
 
