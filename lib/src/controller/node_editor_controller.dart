@@ -946,7 +946,6 @@ class NodeEditorController<T> extends ChangeNotifier {
             ports: n.ports,
             parentId: parent == null ? null : (map[parent] ?? parent),
             collapsed: n.collapsed,
-            locked: false,
             autoSize: n.autoSize,
             color: n.color,
           ),

@@ -26,8 +26,6 @@ Widget _host(NodeEditorController<void> c,
           child: NodeEditor<void>(
             controller: c,
             config: NodeEditorConfig(
-              showMinimap: false,
-              showControls: false,
               animations: animations,
             ),
           ),

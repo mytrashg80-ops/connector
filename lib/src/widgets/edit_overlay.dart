@@ -5,7 +5,6 @@ import 'package:flutter/rendering.dart';
 
 import '../controller/node_editor_controller.dart';
 import '../geometry/edge_path.dart';
-import '../model/edge.dart';
 import '../model/node.dart';
 import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
@@ -14,9 +13,6 @@ import 'scene_renderer.dart';
 
 /// Medidas (en píxeles de pantalla) de los controles de edición.
 abstract final class EditHandles {
-  /// Radio del botón de borrar de una conexión seleccionada.
-  static const double deleteButtonRadius = 11;
-
   /// Lado de los cuadrados de las esquinas del nodo seleccionado.
   static const double cornerSize = 9;
 
@@ -41,35 +37,11 @@ abstract final class EditHandles {
       (PortSide.left, r.centerLeft - Offset(g, 0)),
     ];
   }
-
-  /// La única conexión `(edge, null)` o enlace de jerarquía `(null, hijo)`
-  /// seleccionado, si no hay nada más seleccionado.
-  static (EdgeData?, String?)? singleSelection(NodeEditorController c) {
-    if (c.selectedNodeIds.isNotEmpty) return null;
-    final edges = c.selectedEdgeIds, links = c.selectedLinkIds;
-    if (edges.length + links.length != 1) return null;
-    if (edges.isNotEmpty) {
-      final e = c.edge(edges.first);
-      return e == null ? null : (e, null);
-    }
-    return (null, links.first);
-  }
-
-  /// Centro (en el mundo) del botón de borrar de [e] (`null` = enlace de
-  /// jerarquía, que no tiene etiqueta).
-  static Offset deleteButtonCenter(
-      EdgeData? e, EdgeGeometry g, double scale, bool labelsVisible) {
-    final hasLabel = labelsVisible && e?.label != null && e!.label!.isNotEmpty;
-    // Con etiqueta, el botón va justo debajo para no taparla.
-    return hasLabel
-        ? g.labelPosition + Offset(0, 14 + deleteButtonRadius / scale)
-        : g.labelPosition;
-  }
 }
 
 /// Pinta las ayudas de edición por encima de los nodos: resaltado de la
-/// conexión bajo el ratón, tiradores de las conexiones seleccionadas, botón
-/// de borrar, esquinas de redimensionado, tamaño mientras se redimensiona y
+/// conexión bajo el ratón, tiradores de las conexiones seleccionadas,
+/// esquinas de redimensionado, tamaño mientras se redimensiona y
 /// la vista previa de lo que se va a soltar.
 ///
 /// Sólo trabaja si hay algo que mostrar, así que en reposo no cuesta nada.
@@ -80,22 +52,11 @@ class EditOverlayPainter<T> extends CustomPainter {
     required this.state,
     required this.theme,
     required this.edgeEditing,
-    this.deleteButton = false,
     required this.nodeResize,
-    required this.labelMinScale,
     required this.canResize,
     this.connectorHandleNodes = const [],
-    Listenable? effects,
-  }) : super(
-          repaint: Listenable.merge([
-            state,
-            if (effects != null) effects,
-            controller.viewport,
-            controller.geometry,
-            controller.selection,
-            controller.edgesSignal,
-          ]),
-        );
+    required Listenable repaint,
+  }) : super(repaint: repaint);
 
   final NodeEditorController<T> controller;
   final SceneRenderer<T> renderer;
@@ -103,10 +64,7 @@ class EditOverlayPainter<T> extends CustomPainter {
   final NodeEditorTheme theme;
   final bool edgeEditing;
 
-  /// Pinta el botón de borrar de la conexión seleccionada.
-  final bool deleteButton;
   final bool nodeResize;
-  final double labelMinScale;
   final bool Function(NodeData<T> node) canResize;
 
   /// Nodos que muestran tiradores para crear conectores (además del que
@@ -132,7 +90,6 @@ class EditOverlayPainter<T> extends CustomPainter {
     if (edgeEditing) {
       _paintSelectedEdges(canvas, s);
       _paintSelectedLinks(canvas, s);
-      if (deleteButton) _paintSingleDelete(canvas, s);
     }
     if (nodeResize) _paintResize(canvas, s);
     _paintConnectorHandles(canvas, s);
@@ -243,22 +200,6 @@ class EditOverlayPainter<T> extends CustomPainter {
     }
   }
 
-  /// Botón de borrar cuando hay exactamente una conexión o enlace
-  /// seleccionado (y ningún nodo).
-  void _paintSingleDelete(Canvas canvas, double s) {
-    final single = EditHandles.singleSelection(controller);
-    if (single == null) return;
-    final (edge, link) = single;
-    if (edge != null) {
-      if (edge.id == state.reconnectingEdgeId) return;
-      final g = renderer.geometryOf(edge);
-      if (g != null) _paintDeleteButton(canvas, edge, g, s);
-    } else if (link != state.reconnectingLinkId) {
-      final g = renderer.linkGeometryOf(link!);
-      if (g != null) _paintDeleteButton(canvas, null, g, s);
-    }
-  }
-
   void _paintGuides(Canvas canvas, double s) {
     final guides = state.guides;
     if (guides.isEmpty) return;
@@ -292,24 +233,6 @@ class EditOverlayPainter<T> extends CustomPainter {
       _fill.color = theme.edgeSelectedColor;
       canvas.drawCircle(p, r * 0.45, _fill);
     }
-  }
-
-  void _paintDeleteButton(
-      Canvas canvas, EdgeData? e, EdgeGeometry g, double s) {
-    final c = EditHandles.deleteButtonCenter(e, g, s, s >= labelMinScale);
-    final r = EditHandles.deleteButtonRadius / s;
-    _fill.color = theme.invalidConnectionColor;
-    canvas.drawCircle(c, r, _fill);
-    _stroke
-      ..strokeWidth = 2 / s
-      ..color = theme.nodeColor;
-    canvas.drawCircle(c, r, _stroke);
-    final k = r * 0.38;
-    _stroke
-      ..strokeWidth = 1.8 / s
-      ..color = const Color(0xFFFFFFFF);
-    canvas.drawLine(c + Offset(-k, -k), c + Offset(k, k), _stroke);
-    canvas.drawLine(c + Offset(k, -k), c + Offset(-k, k), _stroke);
   }
 
   void _paintResize(Canvas canvas, double s) {
@@ -377,9 +300,7 @@ class EditOverlayPainter<T> extends CustomPainter {
       !identical(old.renderer, renderer) ||
       !identical(old.state, state) ||
       old.edgeEditing != edgeEditing ||
-      old.deleteButton != deleteButton ||
       old.nodeResize != nodeResize ||
-      old.labelMinScale != labelMinScale ||
       old.canResize != canResize ||
       !listEquals(old.connectorHandleNodes, connectorHandleNodes);
 }

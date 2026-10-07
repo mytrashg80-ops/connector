@@ -16,13 +16,11 @@ import '../model/edge.dart';
 import '../model/node.dart';
 import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
-import 'controls.dart';
 import 'alignment_guides.dart';
 import 'default_node.dart';
 import 'edit_overlay.dart';
 import 'effects.dart';
 import 'editor_config.dart';
-import 'minimap.dart';
 import 'node_canvas.dart';
 import 'painters.dart';
 import 'scene_renderer.dart';
@@ -49,13 +47,10 @@ class NodeEditor<T> extends StatefulWidget {
     this.overlays = const [],
     this.onNodeTap,
     this.onNodeDoubleTap,
-    this.onNodeContextMenu,
     this.onEdgeTap,
     this.onEdgeDoubleTap,
-    this.onEdgeContextMenu,
     this.onCanvasTap,
     this.onCanvasDoubleTap,
-    this.onCanvasContextMenu,
     this.onConnect,
     this.onConnectionRejected,
     this.onConnectionDropped,
@@ -67,7 +62,6 @@ class NodeEditor<T> extends StatefulWidget {
     this.onEdgeReconnected,
     this.onEdgeDisconnected,
     this.onLinkTap,
-    this.onLinkContextMenu,
     this.onContextMenu,
     this.selectionOverlayBuilder,
   });
@@ -90,16 +84,10 @@ class NodeEditor<T> extends StatefulWidget {
   final void Function(NodeData<T> node)? onNodeTap;
   final void Function(NodeData<T> node)? onNodeDoubleTap;
 
-  /// Clic derecho / pulsación larga sobre un nodo.
-  final void Function(NodeData<T> node, Offset globalPosition)?
-      onNodeContextMenu;
   final void Function(EdgeData edge)? onEdgeTap;
   final void Function(EdgeData edge)? onEdgeDoubleTap;
-  final void Function(EdgeData edge, Offset globalPosition)? onEdgeContextMenu;
   final void Function(Offset worldPosition)? onCanvasTap;
   final void Function(Offset worldPosition)? onCanvasDoubleTap;
-  final void Function(Offset worldPosition, Offset globalPosition)?
-      onCanvasContextMenu;
 
   /// Se creó una conexión desde la UI.
   final void Function(EdgeData edge)? onConnect;
@@ -135,15 +123,8 @@ class NodeEditor<T> extends StatefulWidget {
   /// Toque sobre un enlace de jerarquía (recibe el nodo hijo).
   final void Function(NodeData<T> child)? onLinkTap;
 
-  /// Clic derecho / pulsación larga sobre un enlace de jerarquía.
-  final void Function(NodeData<T> child, Offset globalPosition)?
-      onLinkContextMenu;
-
   /// Clic derecho / pulsación larga en cualquier parte del editor, con lo
   /// que hay debajo y las acciones disponibles. Construye aquí tu menú.
-  ///
-  /// Si se indica, sustituye a [onNodeContextMenu], [onEdgeContextMenu],
-  /// [onLinkContextMenu] y [onCanvasContextMenu].
   final void Function(EditorContextMenuDetails<T> details)? onContextMenu;
 
   /// Barra de acciones propia junto a la selección (un nodo, varios, una
@@ -233,6 +214,12 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
 
   NodeEditorController<T> get _c => widget.controller;
   late NodeEditorTheme _theme;
+
+  // Lo que repinta las ayudas de edición y lo que reconstruye la barra de la
+  // selección (creados una vez por controlador, no en cada build).
+  late Listenable _overlayRepaint;
+  late Listenable _interactionRepaint;
+  late Listenable _selectionChanges;
 
   // Culling
   Rect? _builtRegion;
@@ -351,6 +338,24 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   }
 
   void _attach(NodeEditorController<T> c) {
+    _overlayRepaint = Listenable.merge([
+      _interaction,
+      _fx,
+      c.viewport,
+      c.geometry,
+      c.selection,
+      c.edgesSignal,
+    ]);
+    _interactionRepaint = Listenable.merge([_interaction, c.viewport]);
+    _selectionChanges = Listenable.merge([
+      c.selection,
+      c.geometry,
+      c.structure,
+      c.edgesSignal,
+      c.locked,
+      c.history,
+      _gesturing,
+    ]);
     c.structure.addListener(_onGraphStructure);
     c.selection.addListener(_onStructure);
     c.edgesSignal.addListener(_onEdges);
@@ -856,23 +861,6 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
 
   bool get _edgeEditing => !_readOnly && widget.config.enableEdgeEditing;
 
-  /// Botón de borrar de la conexión (o enlace) seleccionado bajo [world].
-  (EdgeData?, String?)? _hitDeleteButton(Offset world) {
-    if (!_edgeEditing || !widget.config.showEdgeDeleteButton) return null;
-    final single = EditHandles.singleSelection(_c);
-    if (single == null) return null;
-    final (edge, link) = single;
-    final g = edge != null
-        ? _renderer.geometryOf(edge)
-        : _renderer.linkGeometryOf(link!);
-    if (g == null) return null;
-    final s = _c.viewport.scale;
-    final c = EditHandles.deleteButtonCenter(
-        edge, g, s, s >= widget.config.labelMinScale);
-    final r = (EditHandles.deleteButtonRadius + 4) / s;
-    return (c - world).distance <= r ? single : null;
-  }
-
   /// Extremo de una conexión o enlace seleccionado (o bajo el ratón) en
   /// [world].
   _EndHit? _hitEdgeEnd(Offset world) {
@@ -975,17 +963,6 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     }
 
     if (!_readOnly) {
-      final del = _hitDeleteButton(world);
-      if (del != null) {
-        final (edge, link) = del;
-        if (edge != null) {
-          _c.removeEdge(edge.id);
-        } else {
-          _unlink(link!);
-        }
-        _mode = _Mode.none;
-        return;
-      }
       final end = _hitEdgeEnd(world);
       if (end != null) {
         if (end.edge != null) {
@@ -1279,41 +1256,29 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   }
 
   void _contextMenuAt(Offset world, Offset global) {
-    final unified = widget.onContextMenu;
-    void emit(EditorTarget<T> target) => unified?.call(EditorContextMenuDetails(
-          target: target,
-          globalPosition: global,
-          localPosition: _c.viewport.toScreen(world),
-          worldPosition: world,
-          actions: _c.actionsFor(target),
-        ));
-
+    final EditorTarget<T> target;
     final node = _c.nodeAt(world);
+    final edge = node == null ? _renderer.hitEdge(world, _lineTolerance) : null;
+    final link = node == null && edge == null ? _hitLinkAt(world) : null;
     if (node != null) {
       if (!_c.isNodeSelected(node.id)) _c.selectNode(node.id);
-      if (unified != null) return emit(_c.targetForNode(node));
-      widget.onNodeContextMenu?.call(node, global);
-      return;
-    }
-    final edge = _renderer.hitEdge(world, _lineTolerance);
-    if (edge != null) {
+      target = _c.targetForNode(node);
+    } else if (edge != null) {
       _c.selectEdges([edge.id]);
-      if (unified != null) return emit(EdgeTarget<T>(edge));
-      widget.onEdgeContextMenu?.call(edge, global);
-      return;
-    }
-    final link = _hitLinkAt(world);
-    if (link != null) {
+      target = EdgeTarget<T>(edge);
+    } else if (link != null) {
       _c.selectLinks([link]);
-      final child = _c.node(link)!;
-      if (unified != null) {
-        return emit(LinkTarget<T>(child, _c.parentOf(link)));
-      }
-      widget.onLinkContextMenu?.call(child, global);
-      return;
+      target = LinkTarget<T>(_c.node(link)!, _c.parentOf(link));
+    } else {
+      target = CanvasTarget<T>(world);
     }
-    if (unified != null) return emit(CanvasTarget<T>(world));
-    widget.onCanvasContextMenu?.call(world, global);
+    widget.onContextMenu?.call(EditorContextMenuDetails<T>(
+      target: target,
+      globalPosition: global,
+      localPosition: _c.viewport.toScreen(world),
+      worldPosition: world,
+      actions: _c.actionsFor(target),
+    ));
   }
 
   /// Lo seleccionado ahora mismo, como destino de la barra de acciones.
@@ -1367,18 +1332,12 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         vp.toScreen(world.topLeft), vp.toScreen(world.bottomRight));
   }
 
+  /// La barra sólo se reconstruye cuando cambia lo seleccionado o su
+  /// estado; al mover la cámara únicamente se recoloca (sin reconstruir el
+  /// widget de la aplicación).
   Widget _buildSelectionOverlay(SelectionOverlayBuilder<T> builder) {
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        _c.selection,
-        _c.geometry,
-        _c.structure,
-        _c.edgesSignal,
-        _c.viewport,
-        _c.locked,
-        _c.history,
-        _gesturing,
-      ]),
+      listenable: _selectionChanges,
       builder: (context, _) {
         if (_gesturing.value) return const SizedBox.shrink();
         final target = _selectionTarget();
@@ -1395,7 +1354,10 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
         );
         if (child == null) return const SizedBox.shrink();
         return CustomSingleChildLayout(
-          delegate: _AnchorLayout(anchor),
+          delegate: _AnchorLayout(
+            () => _selectionAnchor(target) ?? anchor,
+            relayout: _c.viewport,
+          ),
           child: child,
         );
       },
@@ -2141,9 +2103,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
     // Las líneas se pueden arrastrar para cambiar su trazado.
     final lineCursor =
         _edgeEditing ? SystemMouseCursors.move : SystemMouseCursors.click;
-    if (_hitDeleteButton(world) != null) {
-      cursor = SystemMouseCursors.click;
-    } else if (_hitEdgeEnd(world) != null) {
+    if (_hitEdgeEnd(world) != null) {
       cursor = SystemMouseCursors.grab;
     } else if (!_readOnly && _hitPort(world) != null) {
       cursor = SystemMouseCursors.precise;
@@ -2418,12 +2378,10 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
                         state: _interaction,
                         theme: theme,
                         edgeEditing: _edgeEditing,
-                        deleteButton: config.showEdgeDeleteButton,
                         nodeResize: !_readOnly && config.enableNodeResize,
-                        labelMinScale: config.labelMinScale,
                         canResize: _canResize,
                         connectorHandleNodes: _selectedHandleNodes,
-                        effects: _fxOn ? _fx : null,
+                        repaint: _overlayRepaint,
                       ),
                     ),
                   ),
@@ -2435,35 +2393,11 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
                         state: _interaction,
                         viewport: _c.viewport,
                         theme: theme,
+                        repaint: _interactionRepaint,
                       ),
                     ),
                   ),
                 ),
-                if (config.showMinimap)
-                  Align(
-                    alignment: config.minimapAlignment,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: NodeEditorMinimap<T>(
-                        controller: _c,
-                        theme: theme,
-                        size: config.minimapSize,
-                      ),
-                    ),
-                  ),
-                if (config.showControls)
-                  Align(
-                    alignment: config.controlsAlignment,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: NodeEditorControls<T>(
-                        controller: _c,
-                        theme: theme,
-                        zoomStep: config.zoomStep,
-                        showLock: !config.readOnly,
-                      ),
-                    ),
-                  ),
                 if (widget.selectionOverlayBuilder != null)
                   _buildSelectionOverlay(widget.selectionOverlayBuilder!),
                 ...widget.overlays,
@@ -2476,11 +2410,14 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
   }
 }
 
-/// Coloca la barra de la selección centrada encima de [anchor] (o debajo si
-/// no cabe), sin salirse del editor.
+/// Coloca la barra de la selección centrada encima de su ancla (o debajo si
+/// no cabe), sin salirse del editor. Se recoloca sola cuando cambia
+/// [relayout] (la cámara).
 class _AnchorLayout extends SingleChildLayoutDelegate {
-  _AnchorLayout(this.anchor);
-  final Rect anchor;
+  _AnchorLayout(this.anchor, {super.relayout});
+
+  /// Zona (en el editor) junto a la que va la barra.
+  final Rect Function() anchor;
 
   static const double _gap = 24;
   static const double _margin = 8;
@@ -2491,14 +2428,16 @@ class _AnchorLayout extends SingleChildLayoutDelegate {
 
   @override
   Offset getPositionForChild(Size size, Size child) {
+    final a = anchor();
     final maxX = math.max(_margin, size.width - child.width - _margin);
     final maxY = math.max(_margin, size.height - child.height - _margin);
-    final x = (anchor.center.dx - child.width / 2).clamp(_margin, maxX);
-    var y = anchor.top - _gap - child.height;
-    if (y < _margin) y = anchor.bottom + _gap;
+    final x = (a.center.dx - child.width / 2).clamp(_margin, maxX);
+    var y = a.top - _gap - child.height;
+    if (y < _margin) y = a.bottom + _gap;
     return Offset(x, y.clamp(_margin, maxY));
   }
 
+  // Cada build trae un ancla nueva (la selección cambió): recolocar.
   @override
-  bool shouldRelayout(_AnchorLayout old) => old.anchor != anchor;
+  bool shouldRelayout(_AnchorLayout old) => true;
 }

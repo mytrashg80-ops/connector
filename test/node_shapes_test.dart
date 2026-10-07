@@ -167,10 +167,8 @@ void main() {
           child: NodeEditor<void>(
             controller: c,
             theme: theme,
-            config: const NodeEditorConfig(
-                showMinimap: false,
-                showControls: false,
-                animations: NodeEditorAnimations.none),
+            config:
+                const NodeEditorConfig(animations: NodeEditorAnimations.none),
           ),
         ),
       ));
@@ -197,10 +195,7 @@ void main() {
         height: 600,
         child: NodeEditor<void>(
           controller: c,
-          config: const NodeEditorConfig(
-              showMinimap: false,
-              showControls: false,
-              animations: NodeEditorAnimations.none),
+          config: const NodeEditorConfig(animations: NodeEditorAnimations.none),
         ),
       ),
     ));

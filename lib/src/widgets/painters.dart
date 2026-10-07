@@ -165,14 +165,25 @@ class InteractionPainter extends CustomPainter {
     required this.state,
     required this.viewport,
     required this.theme,
-  }) : super(repaint: Listenable.merge([state, viewport]));
+    required Listenable repaint,
+  }) : super(repaint: repaint);
 
   final InteractionState state;
   final NodeViewport viewport;
   final NodeEditorTheme theme;
 
+  static final Paint _fill = Paint();
+  static final Paint _stroke = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round;
+
   @override
   void paint(Canvas canvas, Size size) {
+    if (state.dropTarget == null &&
+        state.marquee == null &&
+        (state.connectFrom == null || state.connectTo == null)) {
+      return;
+    }
     final s = viewport.scale;
     canvas.save();
     canvas.translate(viewport.offset.dx, viewport.offset.dy);
@@ -182,15 +193,12 @@ class InteractionPainter extends CustomPainter {
     if (drop != null) {
       final rr = RRect.fromRectAndRadius(
           drop.inflate(6 / s), Radius.circular(theme.nodeRadius + 6 / s));
-      canvas.drawRRect(
-          rr, Paint()..color = theme.dropTargetColor.withValues(alpha: 0.12));
-      canvas.drawRRect(
-        rr,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2 / s
-          ..color = theme.dropTargetColor,
-      );
+      _fill.color = theme.dropTargetColor.withValues(alpha: 0.12);
+      canvas.drawRRect(rr, _fill);
+      _stroke
+        ..strokeWidth = 2 / s
+        ..color = theme.dropTargetColor;
+      canvas.drawRRect(rr, _stroke);
     }
 
     final from = state.connectFrom, to = state.connectTo;
@@ -205,37 +213,26 @@ class InteractionPainter extends CustomPainter {
       final bSide = state.connectReversed ? state.connectFromSide : toSide;
       final g = buildEdgeGeometry(state.connectCurve, a, aSide, b, bSide,
           cornerRadius: theme.edgeCornerRadius);
-      canvas.drawPath(
-        dashPath(g.path, const [8, 6]),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = theme.edgeWidth
-          ..strokeCap = StrokeCap.round
-          ..color = color,
-      );
+      _stroke
+        ..strokeWidth = theme.edgeWidth
+        ..color = color;
+      canvas.drawPath(dashPath(g.path, const [8, 6]), _stroke);
       if (state.connectToSide != null) {
-        canvas.drawCircle(
-          to,
-          theme.portRadius + 4,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2
-            ..color = color,
-        );
+        _stroke.strokeWidth = 2;
+        canvas.drawCircle(to, theme.portRadius + 4, _stroke);
       }
-      canvas.drawCircle(from, theme.portRadius, Paint()..color = color);
+      _fill.color = color;
+      canvas.drawCircle(from, theme.portRadius, _fill);
     }
 
     final m = state.marquee;
     if (m != null) {
-      canvas.drawRect(m, Paint()..color = theme.selectionFillColor);
-      canvas.drawRect(
-        m,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1 / s
-          ..color = theme.selectionBorderColor,
-      );
+      _fill.color = theme.selectionFillColor;
+      canvas.drawRect(m, _fill);
+      _stroke
+        ..strokeWidth = 1 / s
+        ..color = theme.selectionBorderColor;
+      canvas.drawRect(m, _stroke);
     }
     canvas.restore();
   }

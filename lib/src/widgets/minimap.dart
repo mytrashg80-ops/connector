@@ -41,6 +41,20 @@ class _MinimapCache {
 
 class _NodeEditorMinimapState<T> extends State<NodeEditorMinimap<T>> {
   final _MinimapCache _cache = _MinimapCache();
+  late Listenable _repaint = _changesOf(widget.controller);
+
+  static Listenable _changesOf(NodeEditorController<Object?> c) =>
+      Listenable.merge([c.geometry, c.structure, c.selection, c.viewport]);
+
+  @override
+  void didUpdateWidget(NodeEditorMinimap<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller)) {
+      _repaint = _changesOf(widget.controller);
+      _cache.dispose();
+      _cache.key = null;
+    }
+  }
 
   @override
   void dispose() {
@@ -80,12 +94,7 @@ class _NodeEditorMinimapState<T> extends State<NodeEditorMinimap<T>> {
                   controller: c,
                   theme: theme,
                   cache: _cache,
-                  repaint: Listenable.merge([
-                    c.geometry,
-                    c.structure,
-                    c.selection,
-                    c.viewport,
-                  ]),
+                  repaint: _repaint,
                 ),
               ),
             ),

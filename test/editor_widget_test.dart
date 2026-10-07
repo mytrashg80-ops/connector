@@ -91,8 +91,6 @@ void main() {
           height: 600,
           child: NodeEditor<void>(
             controller: c,
-            config:
-                const NodeEditorConfig(showMinimap: false, showControls: false),
             onConnect: (e) => created = e,
           ),
         ),
@@ -147,18 +145,32 @@ void main() {
     expect(box.color, NodeEditorTheme.dark().backgroundColor);
   });
 
-  testWidgets('minimapa y controles se renderizan', (tester) async {
+  testWidgets('el minimapa se coloca como overlay y mueve la cámara',
+      (tester) async {
     final c = NodeEditorController<void>(nodes: [
       for (var i = 0; i < 50; i++)
         _n('n$i', Offset(i * 200.0, (i % 5) * 150.0)),
     ]);
-    await tester.pumpWidget(_host(c,
-        config: const NodeEditorConfig(showMinimap: true, showControls: true)));
+    await tester.pumpWidget(MaterialApp(
+      home: SizedBox(
+        width: 800,
+        height: 600,
+        child: NodeEditor<void>(
+          controller: c,
+          overlays: [
+            Align(
+              alignment: Alignment.bottomRight,
+              child: NodeEditorMinimap<void>(controller: c),
+            ),
+          ],
+        ),
+      ),
+    ));
     expect(find.byType(NodeEditorMinimap<void>), findsOneWidget);
-    await tester.tap(find.byTooltip('Ajustar vista'));
-    // El botón usa una transición de cámara.
+    final before = c.viewport.offset;
+    await tester.tap(find.byType(NodeEditorMinimap<void>));
     await tester.pumpAndSettle();
-    expect(c.viewport.scale, lessThan(1));
+    expect(c.viewport.offset, isNot(before));
   });
 
   testWidgets('5000 nodos: sólo se construyen los visibles', (tester) async {
@@ -218,8 +230,6 @@ void main() {
           height: 600,
           child: NodeEditor<void>(
             controller: c,
-            config:
-                const NodeEditorConfig(showMinimap: false, showControls: false),
             onNodeResized: (id, r) => resized = r,
           ),
         ),
@@ -291,7 +301,6 @@ void main() {
             child: NodeEditor<void>(
               controller: c,
               theme: theme,
-              config: const NodeEditorConfig(showEdgeDeleteButton: true),
               onEdgeReconnected: (_, after) => reconnected = after,
               onEdgeDisconnected: (e) => disconnected = e,
             ),
@@ -358,18 +367,6 @@ void main() {
       await tester.pump();
       expect(c.edge('e1')!.targetNodeId, 'c');
     });
-
-    testWidgets('el botón de borrar elimina la conexión seleccionada',
-        (tester) async {
-      await setUpEditor(tester);
-      c.selectEdges(['e1']);
-      await tester.pump();
-      final renderer = SceneRenderer<void>(c)..theme = theme;
-      final geo = renderer.geometryOf(c.edge('e1')!)!;
-      await tester.tapAt(origin + c.viewport.toScreen(geo.labelPosition));
-      await tester.pump();
-      expect(c.edgeCount, 0);
-    });
   });
 
   group('enlaces de jerarquía', () {
@@ -402,7 +399,6 @@ void main() {
             child: NodeEditor<void>(
               controller: c,
               theme: theme,
-              config: const NodeEditorConfig(showEdgeDeleteButton: true),
               onParentChanged: (child, parent) => changes.add((child, parent)),
             ),
           ),
@@ -427,18 +423,6 @@ void main() {
       expect(changes, [('h', null)]);
       c.undo();
       expect(c.node('h')!.parentId, 'p');
-    });
-
-    testWidgets('el botón de borrar rompe el enlace seleccionado',
-        (tester) async {
-      await setUpEditor(tester);
-      c.selectLinks(['h']);
-      await tester.pump();
-      final g = renderer().linkGeometryOf('h')!;
-      await tester.tapAt(screen(
-          EditHandles.deleteButtonCenter(null, g, c.viewport.scale, true)));
-      await tester.pump();
-      expect(c.node('h')!.parentId, isNull);
     });
 
     testWidgets('arrastrar la línea cambia su trazado y vuelve recta',

@@ -13,12 +13,6 @@ para integrarse como **un widget más** dentro de una app de inventario:
 Funciona en **web, Windows, macOS, Linux, Android e iOS**. No tiene
 dependencias aparte de Flutter.
 
-| Cadena de ensamblado | Mapa mental |
-|---|---|
-| ![Ensamblado](doc/ensamblado.png) | ![Mapa mental](doc/mapa_mental.png) |
-| **Organigrama** | **Distribución (tema claro)** |
-| ![Organigrama](doc/organigrama.png) | ![Distribución](doc/distribucion_claro.png) |
-
 ## Características
 
 | | |
@@ -38,7 +32,7 @@ dependencias aparte de Flutter.
 | **Edición** | Deshacer/rehacer con transacciones, duplicar, borrar, atajos de teclado |
 | **Auto-organización** | `TreeLayout`, `LayeredLayout` (tipo Sugiyama), `RadialLayout`, `MindMapLayout`, `GridLayout`, con animación opcional |
 | **Tu interfaz** | El editor no construye menús, diálogos ni barras: te entrega qué hay bajo el clic derecho (`onContextMenu`), qué hay seleccionado y dónde (`selectionOverlayBuilder`) y las acciones que sabe hacer (`EditorAction`). Tú pones textos, iconos y estilo |
-| **Extras** | Minimapa y controles de zoom opcionales, vista previa de nodos (`NodePreview`), serialización JSON, tema claro/oscuro totalmente personalizable |
+| **Extras** | Minimapa (`NodeEditorMinimap`), vista previa de nodos (`NodePreview`), serialización JSON, tema claro/oscuro totalmente personalizable |
 
 ## Instalación
 
@@ -87,10 +81,8 @@ NodeEditor<Producto>(
 )
 ```
 
-Hay una app de demostración completa en [`example/`](example/lib/main.dart)
-(`cd example && flutter run -d chrome`) con 7 escenarios: organigrama, empresa y
-sucursales, cadena de ensamblado, distribución, inventario, mapa mental y una
-prueba de estrés con 3000 nodos.
+En [`example/`](example/lib/main.dart) hay un ejemplo completo en un solo
+archivo (`cd example && flutter run -d chrome`).
 
 ## Modelo de datos
 
@@ -181,7 +173,6 @@ NodeEditorTheme.light(nodeTypes: {
 - Para cambiar el estilo desde la UI basta con `controller.updateNode(id,
   (n) => n.copyWith(style: ..., color: ...))`. Se puede deshacer y se guarda
   en el JSON. `clearStyle: true` / `clearColor: true` vuelven al del tipo.
-  El ejemplo trae un diálogo completo (`example/lib/style_editor.dart`).
 - Los iconos se guardan como texto (`'flag'`, `'truck'`, `'check'`…) para
   que el JSON sea portable. `NodeIcons.all` trae unos 40; añade los tuyos con
   `theme.copyWith(icons: {...NodeIcons.all, 'mio': Icons.abc})`.
@@ -261,17 +252,13 @@ controller.actionFor(EdgeTarget(linea), EditorCommand.setEdgeCurve,
 controller.targetForNode(nodo); // NodeTarget o SelectionTarget
 ```
 
-Los callbacks por tipo (`onNodeContextMenu`, `onEdgeContextMenu`,
-`onLinkContextMenu`, `onCanvasContextMenu`) siguen existiendo; si das
-`onContextMenu`, éste los sustituye.
-
 ### Barra de acciones de la selección
 
 `selectionOverlayBuilder` construye un widget tuyo junto a lo seleccionado
 (un nodo, varios, una conexión o un enlace). El editor lo coloca encima (o
-debajo si no cabe), lo mueve con la cámara y lo oculta mientras se arrastra.
-Recibe el mismo `target` y `actions`, y el `anchor` en pantalla. Devuelve
-`null` para no mostrar nada.
+debajo si no cabe), lo recoloca al mover la cámara sin reconstruirlo y lo
+oculta mientras se arrastra. Recibe el mismo `target` y `actions`, y el
+`anchor` en pantalla. Devuelve `null` para no mostrar nada.
 
 ```dart
 selectionOverlayBuilder: (context, d) => switch (d.target) {
@@ -287,14 +274,11 @@ selectionOverlayBuilder: (context, d) => switch (d.target) {
 
 ### Controles, minimapa y diálogos
 
-- El editor **no añade controles ni minimapa** por defecto. Haz los tuyos con
-  `controller.viewport.zoomBy(1.2, animate: true)`, `controller.fitView()`,
-  `undo`/`redo` (`controller.history` avisa de cambios) y
-  `controller.locked`, y colócalos con `NodeEditor.overlays`.
-  `NodeEditorMinimap` y `NodeEditorControls` siguen disponibles como piezas
-  opcionales (`showMinimap` / `showControls` o en `overlays`).
-- El botón × sobre la línea seleccionada ya no aparece por defecto
-  (`showEdgeDeleteButton: true` lo recupera).
+- Controles de cámara: `controller.viewport.zoomBy(1.2, animate: true)`,
+  `controller.fitView()`, `undo`/`redo` (`controller.history` avisa de
+  cambios) y `controller.locked`. Colócalos con `NodeEditor.overlays`.
+- Minimapa: `NodeEditorMinimap(controller: controller)` es un widget más que
+  puedes poner donde quieras (normalmente en `overlays`).
 - Para un diálogo de estilo propio: las opciones son `NodeShape.values`,
   `NodeBorderStyle.values` y `theme.icons`. `NodePreview` pinta un nodo igual
   que en el editor, y `controller.setNodeStyle(ids, estilo, color:, resize:)`
@@ -303,8 +287,8 @@ selectionOverlayBuilder: (context, d) => switch (d.target) {
 - Para la creación de nodos: `onCanvasDoubleTap`, `onConnectionDropped`,
   `NodeEditorState.globalToWorld` y `showDropPreview` (paletas arrastrables).
 
-El ejemplo (`example/lib/editor_ui.dart`) construye así su menú, su barra
-flotante y sus controles con Material 3.
+El ejemplo (`example/lib/main.dart`) construye así su menú, su barra
+flotante, sus controles y su diálogo con Material 3.
 
 ## Nodos personalizados
 
@@ -348,7 +332,7 @@ final temaOscuro = NodeEditorTheme.dark(
 
 - `NodeEditorTheme.light()`, `.dark()` y `.fromColorScheme(scheme)`.
 - Unas 60 propiedades: fondo, rejilla, nodos, cabeceras, puertos,
-  conexiones, etiquetas, enlaces de jerarquía, selección, minimapa y controles.
+  conexiones, etiquetas, enlaces de jerarquía, selección y minimapa.
 - También es un `ThemeExtension`: regístralo en tu `ThemeData` y el editor lo
   usará automáticamente. Si no pasas ninguno, el editor elige el claro o el
   oscuro según `Theme.of(context).brightness`.
@@ -359,8 +343,7 @@ final temaOscuro = NodeEditorTheme.dark(
 ## Configuración
 
 `NodeEditorConfig` permite: `readOnly`, `showGrid`, `snapToGrid`,
-`showMinimap`, `showControls`, `showEdgeDeleteButton` (los tres `false` por
-defecto), `dragMovesDescendants`, `reparentMode`
+`dragMovesDescendants`, `reparentMode`
 (`none` / `withModifier` / `always`), `wheelBehavior` (`zoom` / `pan`),
 `lodScale`, `labelMinScale`, `cullMargin`, `showHierarchyLinks`,
 `hierarchyAxis`, `enableKeyboardShortcuts`, `marqueeOnEmptyDrag`,
@@ -369,12 +352,12 @@ defecto), `dragMovesDescendants`, `reparentMode`
 `connectorHandles`, `newConnector`...
 
 Callbacks del widget: `onContextMenu`, `selectionOverlayBuilder`,
-`onNodeTap`, `onNodeDoubleTap`, `onNodeContextMenu`,
-`onEdgeTap`, `onEdgeContextMenu`, `onCanvasTap`, `onCanvasContextMenu`,
+`onNodeTap`, `onNodeDoubleTap`, `onEdgeTap`, `onEdgeDoubleTap`,
+`onCanvasTap`, `onCanvasDoubleTap`,
 `onConnect`, `onConnectionRejected`, `onConnectionDropped` (para crear un nodo
 ya conectado al soltar una conexión en el vacío), `onNodesMoved`,
 `onParentChanged`, `canReparent`, `onNodeResized`, `canResize`,
-`onEdgeReconnected`, `onEdgeDisconnected`, `onLinkTap` y `onLinkContextMenu`.
+`onEdgeReconnected`, `onEdgeDisconnected` y `onLinkTap`.
 
 Los enlaces de jerarquía (los que dibuja `parentId`) se editan igual que las
 conexiones. Mover el extremo del padre cambia el padre del hijo; mover el del
@@ -486,54 +469,16 @@ completo en `example/lib/main.dart`.
 
 ## Rendimiento
 
-El editor está pensado para convivir con el resto de tu app sin acaparar
-recursos:
-
-1. **Culling con índice espacial.** Una rejilla hash (`SpatialIndex`) responde
-   en O(celdas) qué nodos están cerca del viewport. Sólo esos nodos existen
-   como widgets, aunque el grafo tenga miles.
-2. **La cámara es una transformación de capa.** Al desplazar o hacer zoom no se
-   reconstruye ni se vuelve a medir ningún widget: cada nodo es un
-   `RepaintBoundary` y sólo se recompone la escena.
-3. **Mover nodos sólo recoloca.** Arrastrar dispara un relayout que no vuelve a
-   medir a los hijos (sus restricciones no cambian) y no reconstruye widgets.
-4. **Conexiones en una capa cacheada.** Las líneas se pintan en una capa propia
-   que sólo se repinta cuando cambia el grafo o la cámara sale de la región
-   precalculada. La geometría de cada conexión se cachea y sólo se recalcula si
-   se mueve alguno de sus extremos.
-5. **Nivel de detalle (LOD).** Por debajo de `lodScale` los nodos se pintan como
-   rectángulos simples, sin widgets. En la prueba de 3000 nodos, la vista
-   general no construye ningún widget de nodo.
-6. **Notificaciones de grano fino.** Cada capa escucha sólo lo que necesita, y la
-   barra de estado o el minimapa no se recalculan al mover la cámara.
-7. **Sin trabajo en reposo.** No hay timers ni tickers activos salvo que existan
-   conexiones `animated: true`. El minimapa graba los nodos en una `Picture`
-   que reutiliza mientras el grafo no cambie.
-8. **Ayudas de edición en su propia capa.** El resaltado, los tiradores y el
-   tamaño al redimensionar se pintan en una capa aparte, que sólo dibuja algo
-   cuando hay una conexión bajo el ratón o algo seleccionado. Los gestos
-   largos (arrastrar, redimensionar) agrupan el historial sin retener las
-   notificaciones, así que se ven en tiempo real y siguen siendo un único paso
-   de deshacer.
-9. **Guías de alineación baratas.** Al empezar el gesto se toman una vez los
-   rectángulos de los nodos visibles; cada movimiento compara sólo con ellos
-   (unas pocas comparaciones por nodo) y no reconstruye nada: las guías se
-   pintan en la capa de ayudas. Doblar una línea tampoco reconstruye el
-   editor, sólo repinta la capa de conexiones.
-10. **Animaciones sin reconstruir.** Un único ticker mueve todas las
-    animaciones y se detiene en cuanto terminan. No reconstruyen widgets: cada
-    nodo animado sólo cambia su capa (opacidad, escala, posición) y la escena
-    de conexiones se repinta. Sólo se animan los nodos que se ven, con un
-    límite (`maxAnimatedNodes`) para que cargar un documento grande no cueste
-    nada. Con `NodeEditorAnimations.none` ni siquiera se añade la capa por
-    nodo.
-
-## Tests
-
-```bash
-flutter test
-```
-
-Cubren el modelo, la validación de conexiones, la jerarquía, el historial, la
-serialización, el índice espacial, los layouts y la interacción del widget
-(arrastrar, desplazar, conectar, LOD, cambio de tema y culling con 5000 nodos).
+- Sólo existen como widgets los nodos cercanos a la vista (índice espacial),
+  aunque el grafo tenga miles.
+- Desplazar y hacer zoom no reconstruye ni vuelve a medir ningún widget: la
+  cámara es una transformación de capa y cada nodo es un `RepaintBoundary`.
+- Las conexiones se pintan en una capa cacheada; la geometría de cada una
+  sólo se recalcula cuando se mueve alguno de sus extremos.
+- Por debajo de `lodScale` los nodos se pintan como formas simples, sin
+  widgets.
+- Cada capa escucha sólo lo que necesita y no hay tickers activos en reposo
+  (salvo conexiones `animated: true`). Las animaciones no reconstruyen
+  widgets.
+- Crea el `NodeEditorTheme` una sola vez (en un campo o en tu `ThemeData`),
+  no dentro de `build`: el editor usa su identidad para invalidar cachés.

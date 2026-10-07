@@ -177,13 +177,11 @@ void main() {
   group('widget', () {
     late NodeEditorController<void> c;
     final menus = <EditorContextMenuDetails<void>>[];
-    var oldNodeMenu = 0;
 
     Future<void> pump(WidgetTester tester,
         {NodeEditorConfig config = const NodeEditorConfig(),
         SelectionOverlayBuilder<void>? toolbar}) async {
       menus.clear();
-      oldNodeMenu = 0;
       c = NodeEditorController<void>(nodes: [
         _n('a', const Offset(100, 200)),
         _n('b', const Offset(400, 200)),
@@ -199,7 +197,6 @@ void main() {
               controller: c,
               config: config,
               onContextMenu: menus.add,
-              onNodeContextMenu: (_, __) => oldNodeMenu++,
               selectionOverlayBuilder: toolbar,
             ),
           ),
@@ -211,11 +208,9 @@ void main() {
         tester.getTopLeft(find.byType(NodeEditor<void>)) +
         c.viewport.toScreen(world);
 
-    testWidgets('por defecto no añade controles, minimapa ni botones',
-        (tester) async {
+    testWidgets('no añade ninguna interfaz propia', (tester) async {
       await pump(tester);
       expect(find.byType(NodeEditorMinimap<void>), findsNothing);
-      expect(find.byType(NodeEditorControls<void>), findsNothing);
       expect(find.byType(Tooltip), findsNothing);
     });
 
@@ -226,7 +221,6 @@ void main() {
           buttons: kSecondaryButton, kind: PointerDeviceKind.mouse);
       await tester.pump();
       expect(menus, hasLength(1));
-      expect(oldNodeMenu, 0, reason: 'onContextMenu sustituye a los otros');
       final t = menus.single.target as NodeTarget<void>;
       expect(t.node.id, 'a');
       expect(c.isNodeSelected('a'), isTrue);
@@ -280,6 +274,24 @@ void main() {
       c.clearSelection();
       await tester.pump();
       expect(bar, findsNothing);
+    });
+
+    testWidgets('al mover la cámara la barra se recoloca sin reconstruirse',
+        (tester) async {
+      var builds = 0;
+      await pump(tester, toolbar: (context, d) {
+        builds++;
+        return const SizedBox(key: Key('barra'), width: 120, height: 32);
+      });
+      c.selectNode('a');
+      await tester.pump();
+      final bar = find.byKey(const Key('barra'));
+      final before = tester.getTopLeft(bar);
+      final count = builds;
+      c.viewport.panBy(const Offset(40, 30));
+      await tester.pump();
+      expect(builds, count);
+      expect(tester.getTopLeft(bar) - before, const Offset(40, 30));
     });
 
     testWidgets('NodePreview pinta el nodo fuera del editor', (tester) async {

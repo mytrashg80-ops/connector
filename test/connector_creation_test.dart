@@ -31,8 +31,6 @@ Widget _host(NodeEditorController<void> c, _Log log,
         child: NodeEditor<void>(
           controller: c,
           config: NodeEditorConfig(
-            showMinimap: false,
-            showControls: false,
             animations: NodeEditorAnimations.none,
             newConnector: style,
             connectorHandles: handles,

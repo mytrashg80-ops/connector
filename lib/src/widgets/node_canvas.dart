@@ -420,24 +420,29 @@ class RenderNodeCanvas<T> extends RenderBox
   @override
   bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
     if (!size.contains(position)) return false;
-    final view = _viewMatrix;
-    var child = lastChild;
-    while (child != null) {
-      final pd = child.parentData! as NodeCanvasParentData;
-      if (pd.nodeId != null) {
-        final m = view.clone()
-          ..multiply(Matrix4.translationValues(pd.offset.dx, pd.offset.dy, 0));
-        final c = child;
-        final hit = result.addWithPaintTransform(
-          transform: m,
-          position: position,
-          hitTest: (r, p) => c.hitTest(r, position: p),
-        );
-        if (hit) return true;
-      }
-      child = pd.previousSibling;
-    }
-    return false;
+    // Una sola transformación de cámara para todos los nodos; cada nodo sólo
+    // añade su desplazamiento.
+    return result.addWithPaintTransform(
+      transform: _viewMatrix,
+      position: position,
+      hitTest: (result, world) {
+        var child = lastChild;
+        while (child != null) {
+          final pd = child.parentData! as NodeCanvasParentData;
+          if (pd.nodeId != null) {
+            final c = child;
+            final hit = result.addWithPaintOffset(
+              offset: pd.offset,
+              position: world,
+              hitTest: (r, p) => c.hitTest(r, position: p),
+            );
+            if (hit) return true;
+          }
+          child = pd.previousSibling;
+        }
+        return false;
+      },
+    );
   }
 
   @override

@@ -34,11 +34,6 @@ class NodeEditorConfig {
     this.readOnly = false,
     this.showGrid = true,
     this.snapToGrid = false,
-    this.showMinimap = false,
-    this.showControls = false,
-    this.minimapAlignment = Alignment.bottomRight,
-    this.controlsAlignment = Alignment.bottomLeft,
-    this.minimapSize = const Size(200, 136),
     this.dragMovesDescendants = true,
     this.reparentMode = ReparentMode.withModifier,
     this.wheelBehavior = WheelBehavior.zoom,
@@ -55,7 +50,6 @@ class NodeEditorConfig {
     this.enableNodeResize = true,
     this.minNodeSize = const Size(72, 36),
     this.enableEdgeEditing = true,
-    this.showEdgeDeleteButton = false,
     this.enableAlignmentGuides = true,
     this.alignmentSnapDistance = 6,
     this.animations = const NodeEditorAnimations(),
@@ -67,19 +61,6 @@ class NodeEditorConfig {
   final bool readOnly;
   final bool showGrid;
   final bool snapToGrid;
-
-  /// Añade el minimapa de serie ([NodeEditorMinimap]). Por defecto el editor
-  /// no añade ninguna interfaz propia: coloca tú el minimapa (o el tuyo) con
-  /// `NodeEditor.overlays`.
-  final bool showMinimap;
-
-  /// Añade la barra de controles de serie ([NodeEditorControls]). Por
-  /// defecto no: construye tus propios controles con los métodos del
-  /// controlador (`viewport.zoomBy`, `fitView`, `undo`…).
-  final bool showControls;
-  final Alignment minimapAlignment;
-  final Alignment controlsAlignment;
-  final Size minimapSize;
 
   /// Al arrastrar un nodo se mueve todo su subárbol (como en mapas mentales).
   final bool dragMovesDescendants;
@@ -129,11 +110,6 @@ class NodeEditorConfig {
   /// reconectarlas o soltarlas en el vacío para desconectarlas.
   final bool enableEdgeEditing;
 
-  /// Pinta un botón de borrar junto a la conexión (o enlace) seleccionado.
-  /// Por defecto no: usa `NodeEditor.selectionOverlayBuilder` para poner tu
-  /// propia barra de acciones.
-  final bool showEdgeDeleteButton;
-
   /// Al arrastrar o redimensionar nodos muestra guías cuando sus bordes o
   /// centros quedan alineados con los de otros nodos visibles, y los atrae
   /// a esa posición. Mantén Ctrl/⌘ pulsado para desactivarlo un momento.
@@ -161,11 +137,6 @@ class NodeEditorConfig {
     bool? readOnly,
     bool? showGrid,
     bool? snapToGrid,
-    bool? showMinimap,
-    bool? showControls,
-    Alignment? minimapAlignment,
-    Alignment? controlsAlignment,
-    Size? minimapSize,
     bool? dragMovesDescendants,
     ReparentMode? reparentMode,
     WheelBehavior? wheelBehavior,
@@ -182,7 +153,6 @@ class NodeEditorConfig {
     bool? enableNodeResize,
     Size? minNodeSize,
     bool? enableEdgeEditing,
-    bool? showEdgeDeleteButton,
     bool? enableAlignmentGuides,
     double? alignmentSnapDistance,
     NodeEditorAnimations? animations,
@@ -193,11 +163,6 @@ class NodeEditorConfig {
       readOnly: readOnly ?? this.readOnly,
       showGrid: showGrid ?? this.showGrid,
       snapToGrid: snapToGrid ?? this.snapToGrid,
-      showMinimap: showMinimap ?? this.showMinimap,
-      showControls: showControls ?? this.showControls,
-      minimapAlignment: minimapAlignment ?? this.minimapAlignment,
-      controlsAlignment: controlsAlignment ?? this.controlsAlignment,
-      minimapSize: minimapSize ?? this.minimapSize,
       dragMovesDescendants: dragMovesDescendants ?? this.dragMovesDescendants,
       reparentMode: reparentMode ?? this.reparentMode,
       wheelBehavior: wheelBehavior ?? this.wheelBehavior,
@@ -215,7 +180,6 @@ class NodeEditorConfig {
       enableNodeResize: enableNodeResize ?? this.enableNodeResize,
       minNodeSize: minNodeSize ?? this.minNodeSize,
       enableEdgeEditing: enableEdgeEditing ?? this.enableEdgeEditing,
-      showEdgeDeleteButton: showEdgeDeleteButton ?? this.showEdgeDeleteButton,
       enableAlignmentGuides:
           enableAlignmentGuides ?? this.enableAlignmentGuides,
       alignmentSnapDistance:
@@ -508,7 +472,8 @@ class EditorSelectionDetails<T> {
   final EditorTarget<T> target;
 
   /// Zona de la selección en coordenadas del editor (los nodos o el centro
-  /// de la línea).
+  /// de la línea) en el momento de construir la barra. El editor recoloca
+  /// la barra cuando se mueve la cámara sin volver a llamar al builder.
   final Rect anchor;
 
   /// Operaciones del editor disponibles para [target].

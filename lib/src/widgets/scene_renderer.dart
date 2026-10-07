@@ -524,7 +524,7 @@ class SceneRenderer<T> {
         ellipsis: '…',
       )..layout(maxWidth: 220),
     );
-    final pad = const EdgeInsets.symmetric(horizontal: 10, vertical: 4);
+    const pad = EdgeInsets.symmetric(horizontal: 10, vertical: 4);
     final w = tp.width + pad.horizontal;
     final h = tp.height + pad.vertical;
     final rect = Rect.fromCenter(center: g.labelPosition, width: w, height: h);

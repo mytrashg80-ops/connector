@@ -375,8 +375,7 @@ void main() {
         c.reconnectEdge('e2', moveSource: true, nodeId: 'a', portId: 'out');
     expect(moved!.sourceNodeId, 'a');
     expect(c.edgesOf('b').length, 1);
-    final floating =
-        c.reconnectEdge('e2', moveSource: true, nodeId: 'b', portId: null);
+    final floating = c.reconnectEdge('e2', moveSource: true, nodeId: 'b');
     expect(floating!.sourcePortId, isNull);
   });
 }

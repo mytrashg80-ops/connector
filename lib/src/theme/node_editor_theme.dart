@@ -143,9 +143,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
     required this.minimapSelectedNodeColor,
     required this.minimapViewportColor,
     required this.minimapBorderColor,
-    required this.controlsBackground,
-    required this.controlsForeground,
-    required this.controlsBorderColor,
     required this.badgeColor,
     required this.badgeTextStyle,
     this.nodeTypes = const {},
@@ -226,11 +223,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
   final Color minimapSelectedNodeColor;
   final Color minimapViewportColor;
   final Color minimapBorderColor;
-
-  // Controles
-  final Color controlsBackground;
-  final Color controlsForeground;
-  final Color controlsBorderColor;
 
   // Insignias (contador de hijos ocultos)
   final Color badgeColor;
@@ -355,9 +347,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
       minimapSelectedNodeColor: accent,
       minimapViewportColor: accent.withValues(alpha: 0.12),
       minimapBorderColor: const Color(0xFFE5E7EB),
-      controlsBackground: Colors.white,
-      controlsForeground: const Color(0xFF374151),
-      controlsBorderColor: const Color(0xFFE5E7EB),
       badgeColor: accent,
       badgeTextStyle: const TextStyle(
           color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
@@ -381,7 +370,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
       nodeHeaderColor: const Color(0xFF2E3037),
       nodeBorderColor: const Color(0xFF3A3D45),
       nodeSelectedBorderColor: accent,
-      nodeShadow: const [],
       nodeTitleStyle: const TextStyle(
           color: text,
           fontSize: 13.5,
@@ -415,9 +403,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
       minimapSelectedNodeColor: accent,
       minimapViewportColor: accent.withValues(alpha: 0.18),
       minimapBorderColor: const Color(0xFF3A3D45),
-      controlsBackground: const Color(0xFF26282E),
-      controlsForeground: const Color(0xFFD1D5DB),
-      controlsBorderColor: const Color(0xFF3A3D45),
       badgeColor: accent,
       badgeTextStyle: const TextStyle(
           color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
@@ -444,9 +429,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
       nodeSubtitleStyle:
           base.nodeSubtitleStyle.copyWith(color: scheme.onSurfaceVariant),
       portFillColor: scheme.surfaceContainerLow,
-      controlsBackground: scheme.surfaceContainerHigh,
-      controlsForeground: scheme.onSurface,
-      controlsBorderColor: scheme.outlineVariant,
       edgeLabelBackground: scheme.surfaceContainerHigh,
       minimapBackground: scheme.surfaceContainer.withValues(alpha: 0.95),
     );
@@ -521,9 +503,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
     Color? minimapSelectedNodeColor,
     Color? minimapViewportColor,
     Color? minimapBorderColor,
-    Color? controlsBackground,
-    Color? controlsForeground,
-    Color? controlsBorderColor,
     Color? badgeColor,
     TextStyle? badgeTextStyle,
     Map<String, NodeTypeStyle>? nodeTypes,
@@ -590,9 +569,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
           minimapSelectedNodeColor ?? this.minimapSelectedNodeColor,
       minimapViewportColor: minimapViewportColor ?? this.minimapViewportColor,
       minimapBorderColor: minimapBorderColor ?? this.minimapBorderColor,
-      controlsBackground: controlsBackground ?? this.controlsBackground,
-      controlsForeground: controlsForeground ?? this.controlsForeground,
-      controlsBorderColor: controlsBorderColor ?? this.controlsBorderColor,
       badgeColor: badgeColor ?? this.badgeColor,
       badgeTextStyle: badgeTextStyle ?? this.badgeTextStyle,
       nodeTypes: nodeTypes ?? this.nodeTypes,
@@ -670,9 +646,6 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
           c(minimapSelectedNodeColor, other.minimapSelectedNodeColor),
       minimapViewportColor: c(minimapViewportColor, other.minimapViewportColor),
       minimapBorderColor: c(minimapBorderColor, other.minimapBorderColor),
-      controlsBackground: c(controlsBackground, other.controlsBackground),
-      controlsForeground: c(controlsForeground, other.controlsForeground),
-      controlsBorderColor: c(controlsBorderColor, other.controlsBorderColor),
       badgeColor: c(badgeColor, other.badgeColor),
       badgeTextStyle: s(badgeTextStyle, other.badgeTextStyle),
       nodeTypes: pick ? nodeTypes : other.nodeTypes,

@@ -1,180 +1,145 @@
-import 'dart:convert';
+// Ejemplo mínimo de `connector`: una red de almacenes, sucursales y
+// productos. El editor sólo pinta el lienzo; el menú contextual, la barra de
+// la selección, los controles de la cámara y los diálogos los construye la
+// aplicación con su propio estilo.
 
 import 'package:connector/connector.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 
-import 'editor_ui.dart';
-import 'node_cards.dart';
-import 'scenarios.dart';
-import 'style_editor.dart';
+void main() => runApp(const ExampleApp());
 
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  // En web evitamos el menú contextual del navegador para usar el nuestro.
-  if (kIsWeb) BrowserContextMenu.disableContextMenu();
-  runApp(const DemoApp());
-}
-
-class DemoApp extends StatefulWidget {
-  const DemoApp({super.key});
-
-  @override
-  State<DemoApp> createState() => _DemoAppState();
-}
-
-class _DemoAppState extends State<DemoApp> {
-  ThemeMode _mode = ThemeMode.dark;
+class ExampleApp extends StatelessWidget {
+  const ExampleApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Connector · Editor de nodos',
+      title: 'connector',
       debugShowCheckedModeBanner: false,
-      themeMode: _mode,
-      theme: ThemeData(
-          colorSchemeSeed: const Color(0xFF6366F1),
-          brightness: Brightness.light),
+      theme: ThemeData(colorSchemeSeed: Colors.indigo),
       darkTheme: ThemeData(
-          colorSchemeSeed: const Color(0xFF8B7CF6),
-          brightness: Brightness.dark),
-      home: EditorPage(
-        dark: _mode == ThemeMode.dark,
-        onToggleTheme: () => setState(() =>
-            _mode = _mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark),
+        colorSchemeSeed: Colors.indigo,
+        brightness: Brightness.dark,
       ),
+      home: const EditorPage(),
     );
   }
 }
 
-class EditorPage extends StatefulWidget {
-  const EditorPage(
-      {super.key, required this.dark, required this.onToggleTheme});
+/// Tipos de nodo de la aplicación.
+const Map<String, NodeTypeStyle> _types = {
+  'almacen': NodeTypeStyle(
+      label: 'Almacén', icon: Icons.warehouse_outlined, color: Colors.indigo),
+  'sucursal': NodeTypeStyle(
+      label: 'Sucursal', icon: Icons.storefront_outlined, color: Colors.teal),
+  'producto': NodeTypeStyle(
+      label: 'Producto',
+      icon: Icons.inventory_2_outlined,
+      color: Colors.orange,
+      shape: NodeShape.pill),
+};
 
-  final bool dark;
-  final VoidCallback onToggleTheme;
+class EditorPage extends StatefulWidget {
+  const EditorPage({super.key});
 
   @override
   State<EditorPage> createState() => _EditorPageState();
 }
 
-class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
-  final _editorKey = GlobalKey<NodeEditorState<Item>>();
-  final controller = NodeEditorController<Item>();
+class _EditorPageState extends State<EditorPage> {
+  final NodeEditorController<void> _controller = NodeEditorController(
+    nodes: const [
+      NodeData(
+          id: 'central',
+          type: 'almacen',
+          title: 'Almacén central',
+          subtitle: 'Madrid',
+          position: Offset(320, 40)),
+      NodeData(
+          id: 'norte',
+          type: 'sucursal',
+          title: 'Sucursal Norte',
+          subtitle: 'Bilbao',
+          parentId: 'central',
+          position: Offset(80, 260)),
+      NodeData(
+          id: 'sur',
+          type: 'sucursal',
+          title: 'Sucursal Sur',
+          subtitle: 'Sevilla',
+          parentId: 'central',
+          position: Offset(560, 260)),
+      NodeData(
+          id: 'tornillos',
+          type: 'producto',
+          title: 'Tornillos M6',
+          size: Size(170, 44),
+          position: Offset(95, 480)),
+      NodeData(
+          id: 'tuercas',
+          type: 'producto',
+          title: 'Tuercas M6',
+          size: Size(170, 44),
+          position: Offset(575, 480)),
+    ],
+    edges: const [
+      EdgeData(
+          id: 'e1',
+          sourceNodeId: 'norte',
+          targetNodeId: 'tornillos',
+          label: '120 u.'),
+      EdgeData(
+          id: 'e2',
+          sourceNodeId: 'sur',
+          targetNodeId: 'tuercas',
+          label: '80 u.',
+          animated: true),
+    ],
+  );
 
-  // Temas creados una sola vez: el editor usa su identidad para cachear.
-  final _light = NodeEditorTheme.light(nodeTypes: nodeTypeStyles);
-  final _dark = NodeEditorTheme.dark(nodeTypes: nodeTypeStyles);
-
-  int _scenario = 0;
-  bool _snap = false;
-  bool _animate = true;
-  int _connector = 0;
-
-  /// Tipos de conector que se crean al arrastrar desde el "+" de un nodo.
-  static const _connectors = <(String, IconData, ConnectorStyle)>[
-    (
-      'Jerarquía (padre e hijo)',
-      Icons.account_tree_outlined,
-      ConnectorStyle.hierarchy
-    ),
-    (
-      'Flujo con flecha',
-      Icons.trending_flat,
-      ConnectorStyle(curve: EdgeCurve.bezier, arrow: true)
-    ),
-    (
-      'Ortogonal',
-      Icons.turn_right,
-      ConnectorStyle(curve: EdgeCurve.smoothStep, arrow: true)
-    ),
-    (
-      'Recta',
-      Icons.horizontal_rule,
-      ConnectorStyle(curve: EdgeCurve.straight, arrow: true)
-    ),
-    (
-      'Discontinua',
-      Icons.more_horiz,
-      ConnectorStyle(curve: EdgeCurve.bezier, dashed: true, arrow: true)
-    ),
-    (
-      'Flujo animado',
-      Icons.animation,
-      ConnectorStyle(curve: EdgeCurve.bezier, animated: true, arrow: true)
-    ),
-  ];
-
-  Scenario get scenario => scenarios[_scenario];
+  // El tema del editor se crea sólo cuando cambian los colores de la app: el
+  // editor usa su identidad para saber cuándo invalidar sus cachés.
+  ColorScheme? _scheme;
+  late NodeEditorTheme _theme;
 
   @override
-  void initState() {
-    super.initState();
-    _load(0);
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final scheme = Theme.of(context).colorScheme;
+    if (scheme != _scheme) {
+      _scheme = scheme;
+      _theme = NodeEditorTheme.fromColorScheme(scheme, nodeTypes: _types);
+    }
   }
 
   @override
   void dispose() {
-    controller.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
-  Future<void> _load(int index) async {
-    final (nodes, edges) = scenarios[index].build();
-    setState(() {
-      _scenario = index;
-      // Jerarquías → enlaces padre/hijo; cadenas → conexiones de flujo.
-      _connector = edges.isEmpty ? 0 : 1;
-    });
-    controller
-      ..clear()
-      ..addNodes(nodes)
-      ..addEdges(edges)
-      ..clearHistory()
-      ..clearSelection();
-    await controller.applyLayout(scenarios[index].layout);
-    controller.clearHistory();
-    // Tras el primer frame ya conocemos el viewport y el tamaño real de los
-    // nodos con `autoSize`, así que reorganizamos y encuadramos.
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || _scenario != index) return;
-      await controller.applyLayout(scenarios[index].layout);
-      controller
-        ..clearHistory()
-        ..fitView(animate: true);
-    });
+  // ------------------------------------------------------- acciones propias
+
+  void _addNode(String type, Offset at, {String? parentId}) {
+    final style = _types[type]!;
+    final id = _controller.generateId(type);
+    _controller
+      ..addNode(NodeData(
+        id: id,
+        type: type,
+        title: 'Nuevo: ${style.label}',
+        parentId: parentId,
+        size: style.shape == NodeShape.pill
+            ? const Size(170, 44)
+            : const Size(200, 96),
+        position: at,
+      ))
+      ..selectNode(id);
   }
 
-  void _autoLayout() => controller.applyLayout(
-        scenario.layout,
-        vsync: this,
-        fitAfter: true,
-      );
-
-  NodeEditorTheme get _theme => widget.dark ? _dark : _light;
-
-  // ----------------------------------------------------------------- acciones
-
-  String _addNode(String type, Offset world,
-      {String? parentId, String? title}) {
-    final id = controller.generateId();
-    final size = sizeFor(type);
-    controller.addNode(makeNode(
-      id,
-      type,
-      title ?? nodeTypeStyles[type]?.label ?? type,
-      position: world - size.center(Offset.zero),
-      parentId: parentId,
-      data: type == 'product' ? {'stock': 0, 'max': 100} : null,
-    ));
-    controller.selectNode(id);
-    return id;
-  }
-
-  Future<void> _rename(NodeData<Item> node) async {
+  Future<void> _rename(NodeData<void> node) async {
     final text = TextEditingController(text: node.title);
-    final result = await showDialog<String>(
+    final title = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Renombrar'),
@@ -193,413 +158,136 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
         ],
       ),
     );
-    if (result != null && result.trim().isNotEmpty) {
-      controller.updateNode(node.id, (n) => n.copyWith(title: result.trim()));
-    }
+    text.dispose();
+    if (title == null || title.trim().isEmpty) return;
+    _controller.updateNode(node.id, (n) => n.copyWith(title: title.trim()));
   }
 
-  Future<void> _editStyle(List<String> ids) async {
-    if (!mounted || ids.isEmpty) return;
-    await showNodeStyleDialog(context, controller, ids, _theme);
-  }
+  // ------------------------------------------------------ menú contextual
 
-  void _addChild(NodeData<Item> node) {
-    final r = controller.rectOf(node.id);
-    final type = _childTypeOf(node.type);
-    final pos = scenario.hierarchyAxis == Axis.vertical
-        ? r.bottomCenter + Offset(0, 60 + sizeFor(type).height / 2)
-        : r.centerRight + Offset(80 + sizeFor(type).width / 2, 0);
-    controller.transaction(() {
-      if (node.collapsed) controller.setCollapsed(node.id, false);
-      _addNode(type, pos, parentId: node.id);
-    });
-  }
-
-  /// Menú contextual: el editor nos dice qué hay bajo el puntero y qué sabe
-  /// hacer; nosotros añadimos lo propio de la aplicación y lo pintamos.
-  Future<void> _contextMenu(EditorContextMenuDetails<Item> d) {
-    final items = switch (d.target) {
-      NodeTarget(:final node) => [
-          AppMenuItem(Icons.edit, 'Renombrar', () => _rename(node)),
-          AppMenuItem(Icons.palette_outlined, 'Forma, color e icono',
-              () => _editStyle([node.id])),
-          AppMenuItem(Icons.subdirectory_arrow_right, 'Añadir hijo',
-              () => _addChild(node)),
-        ],
-      SelectionTarget(:final nodeIds) => [
-          AppMenuItem(
-              Icons.palette_outlined,
-              'Forma, color e icono (${nodeIds.length})',
-              () => _editStyle(nodeIds)),
-        ],
-      CanvasTarget(:final worldPosition) => [
-          for (final e in nodeTypeStyles.entries)
-            AppMenuItem(e.value.icon!, 'Nuevo: ${e.value.label}',
-                () => _addNode(e.key, worldPosition)),
-        ],
-      EdgeTarget() || LinkTarget() => const <AppMenuItem>[],
-    };
-    return showEditorContextMenu(
-      context,
-      d,
-      appItems: items,
-      // En el lienzo la barra superior ya ofrece todo eso.
-      hide: d.target is CanvasTarget
-          ? const {EditorCommand.selectAll, EditorCommand.fitView}
-          : const {EditorCommand.bringToFront},
-    );
-  }
-
-  /// Barra flotante sobre lo seleccionado, con nuestro estilo.
-  Widget? _selectionToolbar(
-      BuildContext context, EditorSelectionDetails<Item> d) {
-    ToolbarButton? act(EditorCommand c) {
-      final a = d.actions.where((a) => a.command == c).firstOrNull;
-      return a == null ? null : ToolbarButton.action(a, d.target);
-    }
-
-    final buttons = switch (d.target) {
-      NodeTarget(:final node) => [
-          ToolbarButton(Icons.edit, 'Renombrar', () => _rename(node)),
-          ToolbarButton(Icons.palette_outlined, 'Forma, color e icono',
-              () => _editStyle([node.id])),
-          ToolbarButton(Icons.subdirectory_arrow_right, 'Añadir hijo',
-              () => _addChild(node)),
-          act(EditorCommand.collapse) ?? act(EditorCommand.expand),
-          act(EditorCommand.duplicate),
-          null,
-          act(EditorCommand.delete),
-        ],
-      SelectionTarget(:final nodeIds) => [
-          ToolbarButton(Icons.palette_outlined, 'Forma, color e icono',
-              () => _editStyle(nodeIds)),
-          act(EditorCommand.duplicate),
-          act(EditorCommand.lock) ?? act(EditorCommand.unlock),
-          null,
-          act(EditorCommand.delete),
-        ],
-      EdgeTarget() => [
-          act(EditorCommand.toggleEdgeAnimation),
-          act(EditorCommand.reverseEdge),
-          act(EditorCommand.straightenEdge),
-          null,
-          act(EditorCommand.deleteEdge),
-        ],
-      LinkTarget() => [
-          act(EditorCommand.straightenLink),
-          act(EditorCommand.unlink),
-        ],
-      CanvasTarget() => const <ToolbarButton?>[],
-    };
-    // Quita huecos de acciones no disponibles (y separadores sobrantes).
-    final list = <ToolbarButton?>[];
-    for (final b in buttons) {
-      if (b == null && (list.isEmpty || list.last == null)) continue;
-      if (b != null || list.isNotEmpty) list.add(b);
-    }
-    while (list.isNotEmpty && list.last == null) {
-      list.removeLast();
-    }
-    if (list.isEmpty || controller.locked.value) return null;
-    return SelectionToolbar(
-      label: d.target is SelectionTarget
-          ? '${(d.target as SelectionTarget).nodeIds.length} nodos'
-          : null,
-      buttons: list,
-    );
-  }
-
-  void _onParentChanged(String child, String? parent) {
-    final c = controller.node(child)?.title;
-    _toast(parent == null
-        ? '“$c” ya no depende de nadie'
-        : '“$c” ahora depende de “${controller.node(parent)?.title}”');
-  }
-
-  String _childTypeOf(String? type) => switch (type) {
-        'company' => 'region',
-        'region' => 'branch',
-        'branch' => 'warehouse',
-        'category' => 'product',
-        final t => t ?? 'employee',
-      };
-
-  /// Soltar una conexión en el vacío crea un nodo nuevo ya conectado (o un
-  /// hijo, si el conector es de jerarquía).
-  void _onConnectionDropped(ConnectionDropDetails<Item> d) {
-    if (d.style.isHierarchy) {
-      _addNode(_childTypeOf(d.node.type), d.worldPosition, parentId: d.node.id);
-      return;
-    }
-    final port = d.port;
-    final type = switch (d.node.type) {
-      'part' => 'station',
-      'station' => 'product',
-      'supplier' || 'product' => 'warehouse',
-      'warehouse' => 'branch',
-      'branch' || 'transport' => 'customer',
-      final t => t,
-    };
-    controller.transaction(() {
-      final id = _addNode(type, d.worldPosition);
-      final created = controller.node(id)!;
-      if (port == null || port.canSend) {
-        final target = created.ports.where((p) => p.canReceive).firstOrNull;
-        controller.connect(
-          sourceNodeId: d.node.id,
-          sourcePortId: port?.id,
-          targetNodeId: id,
-          targetPortId: target?.id,
-          style: d.style,
-        );
-      } else {
-        final source = created.ports.where((p) => p.canSend).firstOrNull;
-        controller.connect(
-          sourceNodeId: id,
-          sourcePortId: source?.id,
-          targetNodeId: d.node.id,
-          targetPortId: port.id,
-          style: d.style,
-        );
-      }
-    });
-  }
-
-  void _showJson() {
-    final json =
-        const JsonEncoder.withIndent('  ').convert(controller.toJson());
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('JSON (${json.length} caracteres)'),
-        content: SizedBox(
-          width: 520,
-          height: 420,
-          child: SingleChildScrollView(
-            child: SelectableText(json,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+  Future<void> _contextMenu(EditorContextMenuDetails<void> details) async {
+    final appItems = <(IconData, String, VoidCallback)>[
+      if (details.target case CanvasTarget(:final worldPosition))
+        for (final MapEntry(:key, :value) in _types.entries)
+          (
+            value.icon!,
+            'Nuevo: ${value.label}',
+            () => _addNode(key, worldPosition)
           ),
+      if (details.target case NodeTarget(:final node)) ...[
+        (Icons.edit_outlined, 'Renombrar', () => _rename(node)),
+        (
+          Icons.add_link,
+          'Añadir sucursal dependiente',
+          () => _addNode('sucursal', node.position + const Offset(0, 220),
+              parentId: node.id),
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cerrar')),
-        ],
-      ),
+      ],
+    ];
+    final scheme = Theme.of(context).colorScheme;
+    final p = details.globalPosition;
+    final run = await showMenu<VoidCallback>(
+      context: context,
+      position: RelativeRect.fromLTRB(p.dx, p.dy, p.dx, p.dy),
+      items: [
+        for (final (icon, label, run) in appItems) _menuItem(icon, label, run),
+        if (appItems.isNotEmpty) const PopupMenuDivider(),
+        for (final a in details.actions)
+          _menuItem(
+            _icon(a),
+            _label(a),
+            a.call,
+            enabled: a.enabled,
+            color: a.destructive ? scheme.error : null,
+            checked: a.selected,
+          ),
+      ],
+    );
+    run?.call();
+  }
+
+  PopupMenuItem<VoidCallback> _menuItem(
+          IconData icon, String label, VoidCallback run,
+          {bool enabled = true, Color? color, bool checked = false}) =>
+      PopupMenuItem(
+        value: run,
+        enabled: enabled,
+        height: 40,
+        child: Row(children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(label,
+                  style: color == null ? null : TextStyle(color: color))),
+          if (checked) const Icon(Icons.check, size: 16),
+        ]),
+      );
+
+  // ------------------------------------------------- barra de la selección
+
+  /// Acciones del editor que mostramos en la barra flotante.
+  static const Set<EditorCommand> _toolbarCommands = {
+    EditorCommand.duplicate,
+    EditorCommand.collapse,
+    EditorCommand.expand,
+    EditorCommand.toggleEdgeAnimation,
+    EditorCommand.reverseEdge,
+    EditorCommand.unlink,
+    EditorCommand.delete,
+    EditorCommand.deleteEdge,
+  };
+
+  Widget _selectionToolbar(
+      BuildContext context, EditorSelectionDetails<void> details) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      elevation: 3,
+      borderRadius: BorderRadius.circular(12),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (details.target case NodeTarget(:final node))
+          IconButton(
+            tooltip: 'Renombrar',
+            iconSize: 18,
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () => _rename(node),
+          ),
+        for (final a in details.actions)
+          if (_toolbarCommands.contains(a.command))
+            IconButton(
+              tooltip: _label(a),
+              iconSize: 18,
+              isSelected: a.selected,
+              color: a.destructive ? scheme.error : null,
+              icon: Icon(_icon(a)),
+              onPressed: a.enabled ? a.call : null,
+            ),
+      ]),
     );
   }
 
-  void _toast(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-          width: 360,
-          duration: const Duration(seconds: 2)));
-  }
-
-  // -------------------------------------------------------------------- UI
+  // --------------------------------------------------------------- build
 
   @override
   Widget build(BuildContext context) {
-    final t = _theme;
-    final wide = MediaQuery.sizeOf(context).width > 760;
-    // La paleta usa `pointerDragAnchorStrategy`: `details.offset` es la
-    // posición del puntero.
-    final editor = DragTarget<String>(
-      onMove: (details) {
-        final state = _editorKey.currentState!;
-        state.showDropPreview(Rect.fromCenter(
-          center: state.globalToWorld(details.offset),
-          width: sizeFor(details.data).width,
-          height: sizeFor(details.data).height,
-        ));
-      },
-      onLeave: (_) => _editorKey.currentState?.showDropPreview(null),
-      onAcceptWithDetails: (details) {
-        final state = _editorKey.currentState!;
-        state.showDropPreview(null);
-        _addNode(details.data, state.globalToWorld(details.offset));
-      },
-      builder: (context, _, __) => NodeEditor<Item>(
-        key: _editorKey,
-        controller: controller,
-        theme: t.copyWithCurve(scenario.curve),
+    return Scaffold(
+      body: NodeEditor<void>(
+        controller: _controller,
+        theme: _theme,
         autofocus: true,
-        config: NodeEditorConfig(
-          snapToGrid: _snap,
-          hierarchyAxis: scenario.hierarchyAxis,
-          animations: _animate
-              ? const NodeEditorAnimations()
-              : NodeEditorAnimations.none,
-          newConnector: _connectors[_connector].$3,
-        ),
-        nodeBuilder: buildNodeCard,
         onNodeDoubleTap: _rename,
         onContextMenu: _contextMenu,
         selectionOverlayBuilder: _selectionToolbar,
-        // Controles y minimapa: los colocamos nosotros, con nuestro estilo.
         overlays: [
           Positioned(
-            left: 12,
-            bottom: 12,
-            child: CanvasControls(controller: controller),
+            left: 16,
+            bottom: 16,
+            child: _CameraControls(controller: _controller),
           ),
-          if (wide)
-            Positioned(
-              right: 12,
-              bottom: 12,
-              child: NodeEditorMinimap<Item>(
-                  controller: controller, theme: t, size: const Size(200, 136)),
-            ),
-        ],
-        onConnectionDropped: _onConnectionDropped,
-        onConnectionRejected: _toast,
-        onParentChanged: _onParentChanged,
-      ),
-    );
-
-    return Scaffold(
-      backgroundColor: t.backgroundColor,
-      drawer: wide ? null : Drawer(child: _Sidebar(page: this)),
-      body: SafeArea(
-        child: Row(
-          children: [
-            if (wide) SizedBox(width: 260, child: _Sidebar(page: this)),
-            Expanded(
-              child: Column(
-                children: [
-                  _TopBar(page: this, showMenuButton: !wide),
-                  Expanded(child: editor),
-                  _StatusBar(controller: controller, theme: t),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Pequeña extensión del ejemplo para cambiar la curva sin perder la
-/// identidad del tema entre frames.
-final _curveCache = Expando<Map<EdgeCurve, NodeEditorTheme>>();
-
-extension on NodeEditorTheme {
-  NodeEditorTheme copyWithCurve(EdgeCurve curve) {
-    if (curve == edgeCurve) return this;
-    final map = _curveCache[this] ??= {};
-    return map[curve] ??= copyWith(edgeCurve: curve);
-  }
-}
-
-class _MenuRow extends StatelessWidget {
-  const _MenuRow(this.icon, this.text);
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Row(children: [
-        Icon(icon, size: 18),
-        const SizedBox(width: 12),
-        Text(text),
-      ]);
-}
-
-class _TopBar extends StatelessWidget {
-  const _TopBar({required this.page, required this.showMenuButton});
-
-  final _EditorPageState page;
-  final bool showMenuButton;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = page._theme;
-    return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: t.controlsBackground,
-        border: Border(bottom: BorderSide(color: t.controlsBorderColor)),
-      ),
-      child: Row(
-        children: [
-          if (showMenuButton)
-            IconButton(
-              icon: Icon(Icons.menu, color: t.controlsForeground),
-              onPressed: () => Scaffold.of(context).openDrawer(),
-            ),
-          Icon(page.scenario.icon, color: t.accentColor, size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              page.scenario.name,
-              style: t.nodeTitleStyle.copyWith(fontSize: 15),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          PopupMenuButton<int>(
-            tooltip: 'Tipo de conector que se crea con el "+" de cada nodo',
-            initialValue: page._connector,
-            // ignore: invalid_use_of_protected_member
-            onSelected: (i) => page.setState(() => page._connector = i),
-            itemBuilder: (context) => [
-              for (var i = 0; i < _EditorPageState._connectors.length; i++)
-                PopupMenuItem(
-                  value: i,
-                  child: _MenuRow(_EditorPageState._connectors[i].$2,
-                      _EditorPageState._connectors[i].$1),
-                ),
-            ],
-            child: IgnorePointer(
-              child: _BarButton(
-                icon: _EditorPageState._connectors[page._connector].$2,
-                label:
-                    'Conector: ${_EditorPageState._connectors[page._connector].$1}',
-                theme: t,
-                onTap: () {},
-              ),
-            ),
-          ),
-          _BarButton(
-            icon: Icons.auto_fix_high,
-            label: 'Auto-organizar',
-            theme: t,
-            onTap: page._autoLayout,
-          ),
-          _BarButton(
-            icon: page._snap ? Icons.grid_on : Icons.grid_off,
-            label: 'Imán',
-            theme: t,
-            active: page._snap,
-            // ignore: invalid_use_of_protected_member
-            onTap: () => page.setState(() => page._snap = !page._snap),
-          ),
-          _BarButton(
-            icon: page._animate
-                ? Icons.animation
-                : Icons.motion_photos_off_outlined,
-            label: 'Animaciones',
-            theme: t,
-            active: page._animate,
-            // ignore: invalid_use_of_protected_member
-            onTap: () => page.setState(() => page._animate = !page._animate),
-          ),
-          _BarButton(
-            icon: Icons.data_object,
-            label: 'JSON',
-            theme: t,
-            onTap: page._showJson,
-          ),
-          _BarButton(
-            icon: page.widget.dark
-                ? Icons.light_mode_outlined
-                : Icons.dark_mode_outlined,
-            label: page.widget.dark ? 'Claro' : 'Oscuro',
-            theme: t,
-            onTap: page.widget.onToggleTheme,
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: NodeEditorMinimap<void>(controller: _controller),
           ),
         ],
       ),
@@ -607,318 +295,103 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _BarButton extends StatelessWidget {
-  const _BarButton({
-    required this.icon,
-    required this.label,
-    required this.theme,
-    required this.onTap,
-    this.active = false,
-  });
+/// Zoom, encuadre e historial hechos con los métodos del controlador.
+class _CameraControls extends StatelessWidget {
+  const _CameraControls({required this.controller});
 
-  final IconData icon;
-  final String label;
-  final NodeEditorTheme theme;
-  final VoidCallback onTap;
-  final bool active;
+  final NodeEditorController<void> controller;
 
   @override
   Widget build(BuildContext context) {
-    final color = active ? theme.accentColor : theme.controlsForeground;
-    final compact = MediaQuery.sizeOf(context).width < 1000;
-    return Padding(
-      padding: const EdgeInsets.only(left: 6),
-      child: Tooltip(
-        message: label,
-        child: OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: color,
-            side: BorderSide(
-                color: active ? theme.accentColor : theme.controlsBorderColor),
-            padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14),
-            minimumSize: const Size(0, 36),
-          ),
-          onPressed: onTap,
-          icon: Icon(icon, size: 18),
-          label: compact ? const SizedBox.shrink() : Text(label),
-        ),
-      ),
-    );
-  }
-}
-
-class _Sidebar extends StatelessWidget {
-  const _Sidebar({required this.page});
-
-  final _EditorPageState page;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = page._theme;
-    final header = t.nodeTypeLabelStyle.copyWith(fontSize: 11);
-    return Container(
-      decoration: BoxDecoration(
-        color: t.controlsBackground,
-        border: Border(right: BorderSide(color: t.controlsBorderColor)),
-      ),
-      child: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-            child: Row(children: [
-              Icon(Icons.hub_outlined, color: t.accentColor),
-              const SizedBox(width: 8),
-              Text('Connector', style: t.nodeTitleStyle.copyWith(fontSize: 17)),
-            ]),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-            child: Text('ESCENARIOS', style: header),
-          ),
-          for (var i = 0; i < scenarios.length; i++)
-            _SideTile(
-              icon: scenarios[i].icon,
-              label: scenarios[i].name,
-              selected: i == page._scenario,
-              theme: t,
-              onTap: () {
-                page._load(i);
-                if (Scaffold.maybeOf(context)?.isDrawerOpen ?? false) {
-                  Navigator.pop(context);
-                }
-              },
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
-            child: Text('ARRASTRA AL LIENZO', style: header),
-          ),
-          for (final e in nodeTypeStyles.entries)
-            Draggable<String>(
-              data: e.key,
-              // Horizontal: en táctil, arrastrar en vertical sigue haciendo
-              // scroll de la lista.
-              affinity: Axis.horizontal,
-              dragAnchorStrategy: pointerDragAnchorStrategy,
-              // Etiqueta pequeña junto al cursor; sobre el lienzo, el editor
-              // dibuja además la silueta del nodo donde caerá.
-              feedback: Transform.translate(
-                offset: const Offset(14, 14),
-                child: _DragPill(style: e.value, theme: t),
-              ),
-              childWhenDragging: Opacity(
-                opacity: 0.4,
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-                  child: _PaletteChip(style: e.value, theme: t),
-                ),
-              ),
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-                child: _PaletteChip(style: e.value, theme: t),
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
-            child: Text('ATAJOS', style: header),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Rueda: zoom · Arrastrar fondo: mover\n'
-              'Shift + arrastrar: selección múltiple\n'
-              'Alt + soltar sobre nodo: asignar jefe/padre\n'
-              'Arrastrar un borde: redimensionar\n'
-              'Al arrastrar se muestran guías de\n'
-              '   alineación (Ctrl: sin imán)\n'
-              'Arrastrar el "+" de un nodo hasta otro:\n'
-              '   crear conector (tipo en la barra)\n'
-              'Arrastrar desde un puerto: conectar\n'
-              'Arrastrar una línea: cambiar su trazado\n'
-              '   (de vuelta a su sitio: recta)\n'
-              'Arrastrar el extremo de una línea:\n'
-              '   moverla a otro nodo/jefe\n'
-              '   (soltar en el vacío: desconectar)\n'
-              'Arrastrar una entrada conectada o\n'
-              '   Ctrl + arrastrar salida: mover conexión\n'
-              'Alt + clic en puerto: romper conexiones\n'
-              'Clic derecho / pulsación larga: menú\n'
-              'Supr: eliminar · Ctrl+Z / Ctrl+Y\n'
-              'Ctrl+D: duplicar · F: ajustar vista',
-              style: t.nodeSubtitleStyle.copyWith(height: 1.7),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SideTile extends StatelessWidget {
-  const _SideTile({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.theme,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final NodeEditorTheme theme;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-      child: Material(
-        color: selected
-            ? theme.accentColor.withValues(alpha: 0.14)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-            child: Row(children: [
-              Icon(icon,
-                  size: 18,
-                  color:
-                      selected ? theme.accentColor : theme.controlsForeground),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(label,
-                    style: theme.nodeTitleStyle.copyWith(
-                        fontWeight:
-                            selected ? FontWeight.w600 : FontWeight.w400,
-                        color: selected ? theme.accentColor : null)),
-              ),
-            ]),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DragPill extends StatelessWidget {
-  const _DragPill({required this.style, required this.theme});
-
-  final NodeTypeStyle style;
-  final NodeEditorTheme theme;
-
-  @override
-  Widget build(BuildContext context) {
+    final c = controller;
     return Material(
-      color: Colors.transparent,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: theme.nodeColor,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: style.color ?? theme.accentColor),
-          boxShadow: const [
-            BoxShadow(color: Color(0x40000000), blurRadius: 10)
-          ],
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.add, size: 14, color: style.color),
-          const SizedBox(width: 6),
-          Text(style.label ?? '',
-              style: theme.nodeTitleStyle.copyWith(fontSize: 12)),
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      elevation: 2,
+      borderRadius: BorderRadius.circular(14),
+      child: ListenableBuilder(
+        listenable: c.history,
+        builder: (context, _) =>
+            Column(mainAxisSize: MainAxisSize.min, children: [
+          IconButton(
+              tooltip: 'Acercar',
+              icon: const Icon(Icons.add),
+              onPressed: () => c.viewport.zoomBy(1.2, animate: true)),
+          IconButton(
+              tooltip: 'Alejar',
+              icon: const Icon(Icons.remove),
+              onPressed: () => c.viewport.zoomBy(1 / 1.2, animate: true)),
+          IconButton(
+              tooltip: 'Ajustar vista',
+              icon: const Icon(Icons.fit_screen_outlined),
+              onPressed: () => c.fitView(animate: true)),
+          IconButton(
+              tooltip: 'Deshacer',
+              icon: const Icon(Icons.undo),
+              onPressed: c.canUndo ? c.undo : null),
+          IconButton(
+              tooltip: 'Rehacer',
+              icon: const Icon(Icons.redo),
+              onPressed: c.canRedo ? c.redo : null),
         ]),
       ),
     );
   }
 }
 
-class _PaletteChip extends StatelessWidget {
-  const _PaletteChip({
-    required this.style,
-    required this.theme,
-  });
+// ------------------------------------------------- textos e iconos propios
 
-  final NodeTypeStyle style;
-  final NodeEditorTheme theme;
+String _label(EditorAction a) => switch (a.command) {
+      EditorCommand.duplicate => 'Duplicar',
+      EditorCommand.delete => 'Eliminar',
+      EditorCommand.deleteWithDescendants => 'Eliminar con descendientes',
+      EditorCommand.collapse => 'Colapsar',
+      EditorCommand.expand => 'Expandir',
+      EditorCommand.detachFromParent || EditorCommand.unlink => 'Separar',
+      EditorCommand.lock => 'Bloquear',
+      EditorCommand.unlock => 'Desbloquear',
+      EditorCommand.bringToFront => 'Traer al frente',
+      EditorCommand.resetStyle => 'Restablecer aspecto',
+      EditorCommand.focus => 'Centrar',
+      EditorCommand.deleteEdge => 'Eliminar conexión',
+      EditorCommand.straightenEdge ||
+      EditorCommand.straightenLink =>
+        'Enderezar',
+      EditorCommand.toggleEdgeAnimation => 'Animar flujo',
+      EditorCommand.setEdgeCurve => switch (a.value) {
+          EdgeCurve.bezier => 'Trazado curvo',
+          EdgeCurve.smoothStep => 'Trazado ortogonal suave',
+          EdgeCurve.step => 'Trazado en escalones',
+          _ => 'Trazado recto',
+        },
+      EditorCommand.reverseEdge => 'Invertir sentido',
+      EditorCommand.selectAll => 'Seleccionar todo',
+      EditorCommand.clearSelection => 'Quitar selección',
+      EditorCommand.fitView => 'Ajustar vista',
+      EditorCommand.undo => 'Deshacer',
+      EditorCommand.redo => 'Rehacer',
+    };
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 220,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: theme.nodeColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.nodeBorderColor),
-      ),
-      child: Row(children: [
-        Icon(style.icon, size: 18, color: style.color),
-        const SizedBox(width: 10),
-        Text(style.label ?? '',
-            style: theme.nodeTitleStyle.copyWith(fontSize: 13)),
-        const Spacer(),
-        Icon(Icons.drag_indicator, size: 16, color: theme.portColor),
-      ]),
-    );
-  }
-}
-
-class _StatusBar extends StatelessWidget {
-  const _StatusBar({required this.controller, required this.theme});
-
-  final NodeEditorController<Item> controller;
-  final NodeEditorTheme theme;
-
-  @override
-  Widget build(BuildContext context) {
-    // Escucha sólo estructura/selección/conexiones: NO se reconstruye al
-    // arrastrar nodos ni al mover la cámara.
-    return ListenableBuilder(
-      listenable: Listenable.merge(
-          [controller.structure, controller.selection, controller.edgesSignal]),
-      builder: (context, _) {
-        final sel = controller.selectedNodeIds;
-        final style = theme.nodeSubtitleStyle;
-        return Container(
-          height: 30,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: theme.controlsBackground,
-            border: Border(top: BorderSide(color: theme.controlsBorderColor)),
-          ),
-          child: Row(children: [
-            Text(
-                '${controller.nodeCount} nodos · ${controller.edgeCount} conexiones',
-                style: style),
-            const SizedBox(width: 24),
-            const Spacer(),
-            if (sel.length == 1) ...[
-              Flexible(
-                  child: Text(
-                () {
-                  final n = controller.node(sel.first)!;
-                  final path = [
-                    ...controller
-                        .ancestorsOf(n.id)
-                        .reversed
-                        .map((id) => controller.node(id)!.title),
-                    n.title,
-                  ];
-                  return path.join('  ›  ');
-                }(),
-                style: style,
-                overflow: TextOverflow.ellipsis,
-              )),
-            ] else if (sel.length > 1)
-              Text('${sel.length} seleccionados', style: style),
-          ]),
-        );
-      },
-    );
-  }
-}
+IconData _icon(EditorAction a) => switch (a.command) {
+      EditorCommand.duplicate => Icons.copy_all_outlined,
+      EditorCommand.delete || EditorCommand.deleteEdge => Icons.delete_outline,
+      EditorCommand.deleteWithDescendants => Icons.delete_sweep_outlined,
+      EditorCommand.collapse => Icons.unfold_less,
+      EditorCommand.expand => Icons.unfold_more,
+      EditorCommand.detachFromParent || EditorCommand.unlink => Icons.link_off,
+      EditorCommand.lock => Icons.lock_outline,
+      EditorCommand.unlock => Icons.lock_open,
+      EditorCommand.bringToFront => Icons.flip_to_front,
+      EditorCommand.resetStyle => Icons.format_color_reset_outlined,
+      EditorCommand.focus => Icons.center_focus_strong_outlined,
+      EditorCommand.straightenEdge ||
+      EditorCommand.straightenLink =>
+        Icons.straighten,
+      EditorCommand.toggleEdgeAnimation => Icons.animation,
+      EditorCommand.setEdgeCurve => Icons.gesture,
+      EditorCommand.reverseEdge => Icons.swap_horiz,
+      EditorCommand.selectAll => Icons.select_all,
+      EditorCommand.clearSelection => Icons.deselect,
+      EditorCommand.fitView => Icons.fit_screen_outlined,
+      EditorCommand.undo => Icons.undo,
+      EditorCommand.redo => Icons.redo,
+    };

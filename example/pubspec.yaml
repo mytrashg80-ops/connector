@@ -1,7 +1,6 @@
 name: connector_example
-description: Demo del editor de nodos `connector` para una app de inventario.
+description: Ejemplo de uso del editor de nodos `connector`.
 publish_to: 'none'
-version: 1.0.0+1
 
 environment:
   sdk: ">=3.6.0 <4.0.0"
@@ -19,14 +18,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  # Roboto incluida para que la web no dependa de fonts.gstatic.com.
-  fonts:
-    - family: Roboto
-      fonts:
-        - asset: assets/fonts/Roboto-400.ttf
-        - asset: assets/fonts/Roboto-500.ttf
-          weight: 500
-        - asset: assets/fonts/Roboto-600.ttf
-          weight: 600
-        - asset: assets/fonts/Roboto-700.ttf
-          weight: 700
