@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 
+import 'editor_ui.dart';
 import 'node_cards.dart';
 import 'scenarios.dart';
 import 'style_editor.dart';
@@ -197,105 +198,115 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _nodeMenu(NodeData<Item> node, Offset global) async {
-    final hasParent = node.parentId != null;
-    final action = await showMenu<String>(
-      context: context,
-      position:
-          RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
-      items: [
-        const PopupMenuItem(
-            value: 'rename', child: _MenuRow(Icons.edit, 'Renombrar')),
-        const PopupMenuItem(
-            value: 'style',
-            child: _MenuRow(Icons.palette_outlined, 'Forma, color e icono')),
-        const PopupMenuItem(
-            value: 'child',
-            child: _MenuRow(Icons.subdirectory_arrow_right, 'Añadir hijo')),
-        const PopupMenuItem(
-            value: 'dup', child: _MenuRow(Icons.copy_all_outlined, 'Duplicar')),
-        if (controller.hasChildren(node.id))
-          PopupMenuItem(
-            value: 'collapse',
-            child: _MenuRow(
-                node.collapsed ? Icons.unfold_more : Icons.unfold_less,
-                node.collapsed ? 'Expandir' : 'Colapsar'),
-          ),
-        if (hasParent)
-          const PopupMenuItem(
-              value: 'unparent',
-              child: _MenuRow(Icons.link_off, 'Quitar de su padre')),
-        PopupMenuItem(
-          value: 'lock',
-          child: _MenuRow(node.locked ? Icons.lock_open : Icons.lock_outline,
-              node.locked ? 'Desbloquear' : 'Bloquear'),
-        ),
-        const PopupMenuDivider(),
-        const PopupMenuItem(
-            value: 'delete', child: _MenuRow(Icons.delete_outline, 'Eliminar')),
-        const PopupMenuItem(
-            value: 'deleteTree',
-            child: _MenuRow(
-                Icons.delete_sweep_outlined, 'Eliminar con descendientes')),
-      ],
-    );
-    switch (action) {
-      case 'rename':
-        await _rename(node);
-      case 'style':
-        if (!mounted) return;
-        // Si el nodo está entre los seleccionados, se aplica a todos.
-        final sel = controller.selectedNodeIds;
-        final ids = sel.contains(node.id) ? sel.toList() : [node.id];
-        await showNodeStyleDialog(context, controller, ids, _theme);
-      case 'child':
-        final r = controller.rectOf(node.id);
-        final type = _childTypeOf(node.type);
-        final pos = scenario.hierarchyAxis == Axis.vertical
-            ? r.bottomCenter + Offset(0, 60 + sizeFor(type).height / 2)
-            : r.centerRight + Offset(80 + sizeFor(type).width / 2, 0);
-        controller.transaction(() {
-          if (node.collapsed) controller.setCollapsed(node.id, false);
-          _addNode(type, pos, parentId: node.id);
-        });
-      case 'dup':
-        controller.duplicate(controller.selectedNodeIds);
-      case 'collapse':
-        controller.toggleCollapsed(node.id);
-      case 'unparent':
-        controller.setParent(node.id, null);
-      case 'lock':
-        controller.updateNode(node.id, (n) => n.copyWith(locked: !n.locked));
-      case 'delete':
-        controller.removeNode(node.id);
-      case 'deleteTree':
-        controller.removeNode(node.id, withDescendants: true);
-    }
+  Future<void> _editStyle(List<String> ids) async {
+    if (!mounted || ids.isEmpty) return;
+    await showNodeStyleDialog(context, controller, ids, _theme);
   }
 
-  Future<void> _linkMenu(NodeData<Item> child, Offset global) async {
-    final parent = controller.node(child.parentId!);
-    final action = await showMenu<String>(
-      context: context,
-      position:
-          RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
-      items: [
-        if (child.linkBend != null)
-          const PopupMenuItem(
-              value: 'straighten',
-              child: _MenuRow(Icons.straighten, 'Enderezar trazado')),
-        PopupMenuItem(
-            value: 'unlink',
-            child: _MenuRow(
-                Icons.link_off, 'Separar de “${parent?.title ?? ''}”')),
-      ],
+  void _addChild(NodeData<Item> node) {
+    final r = controller.rectOf(node.id);
+    final type = _childTypeOf(node.type);
+    final pos = scenario.hierarchyAxis == Axis.vertical
+        ? r.bottomCenter + Offset(0, 60 + sizeFor(type).height / 2)
+        : r.centerRight + Offset(80 + sizeFor(type).width / 2, 0);
+    controller.transaction(() {
+      if (node.collapsed) controller.setCollapsed(node.id, false);
+      _addNode(type, pos, parentId: node.id);
+    });
+  }
+
+  /// Menú contextual: el editor nos dice qué hay bajo el puntero y qué sabe
+  /// hacer; nosotros añadimos lo propio de la aplicación y lo pintamos.
+  Future<void> _contextMenu(EditorContextMenuDetails<Item> d) {
+    final items = switch (d.target) {
+      NodeTarget(:final node) => [
+          AppMenuItem(Icons.edit, 'Renombrar', () => _rename(node)),
+          AppMenuItem(Icons.palette_outlined, 'Forma, color e icono',
+              () => _editStyle([node.id])),
+          AppMenuItem(Icons.subdirectory_arrow_right, 'Añadir hijo',
+              () => _addChild(node)),
+        ],
+      SelectionTarget(:final nodeIds) => [
+          AppMenuItem(
+              Icons.palette_outlined,
+              'Forma, color e icono (${nodeIds.length})',
+              () => _editStyle(nodeIds)),
+        ],
+      CanvasTarget(:final worldPosition) => [
+          for (final e in nodeTypeStyles.entries)
+            AppMenuItem(e.value.icon!, 'Nuevo: ${e.value.label}',
+                () => _addNode(e.key, worldPosition)),
+        ],
+      EdgeTarget() || LinkTarget() => const <AppMenuItem>[],
+    };
+    return showEditorContextMenu(
+      context,
+      d,
+      appItems: items,
+      // En el lienzo la barra superior ya ofrece todo eso.
+      hide: d.target is CanvasTarget
+          ? const {EditorCommand.selectAll, EditorCommand.fitView}
+          : const {EditorCommand.bringToFront},
     );
-    if (action == 'straighten') {
-      controller.setLinkBend(child.id, null);
-    } else if (action == 'unlink') {
-      controller.setParent(child.id, null);
-      _onParentChanged(child.id, null);
+  }
+
+  /// Barra flotante sobre lo seleccionado, con nuestro estilo.
+  Widget? _selectionToolbar(
+      BuildContext context, EditorSelectionDetails<Item> d) {
+    ToolbarButton? act(EditorCommand c) {
+      final a = d.actions.where((a) => a.command == c).firstOrNull;
+      return a == null ? null : ToolbarButton.action(a, d.target);
     }
+
+    final buttons = switch (d.target) {
+      NodeTarget(:final node) => [
+          ToolbarButton(Icons.edit, 'Renombrar', () => _rename(node)),
+          ToolbarButton(Icons.palette_outlined, 'Forma, color e icono',
+              () => _editStyle([node.id])),
+          ToolbarButton(Icons.subdirectory_arrow_right, 'Añadir hijo',
+              () => _addChild(node)),
+          act(EditorCommand.collapse) ?? act(EditorCommand.expand),
+          act(EditorCommand.duplicate),
+          null,
+          act(EditorCommand.delete),
+        ],
+      SelectionTarget(:final nodeIds) => [
+          ToolbarButton(Icons.palette_outlined, 'Forma, color e icono',
+              () => _editStyle(nodeIds)),
+          act(EditorCommand.duplicate),
+          act(EditorCommand.lock) ?? act(EditorCommand.unlock),
+          null,
+          act(EditorCommand.delete),
+        ],
+      EdgeTarget() => [
+          act(EditorCommand.toggleEdgeAnimation),
+          act(EditorCommand.reverseEdge),
+          act(EditorCommand.straightenEdge),
+          null,
+          act(EditorCommand.deleteEdge),
+        ],
+      LinkTarget() => [
+          act(EditorCommand.straightenLink),
+          act(EditorCommand.unlink),
+        ],
+      CanvasTarget() => const <ToolbarButton?>[],
+    };
+    // Quita huecos de acciones no disponibles (y separadores sobrantes).
+    final list = <ToolbarButton?>[];
+    for (final b in buttons) {
+      if (b == null && (list.isEmpty || list.last == null)) continue;
+      if (b != null || list.isNotEmpty) list.add(b);
+    }
+    while (list.isNotEmpty && list.last == null) {
+      list.removeLast();
+    }
+    if (list.isEmpty || controller.locked.value) return null;
+    return SelectionToolbar(
+      label: d.target is SelectionTarget
+          ? '${(d.target as SelectionTarget).nodeIds.length} nodos'
+          : null,
+      buttons: list,
+    );
   }
 
   void _onParentChanged(String child, String? parent) {
@@ -303,59 +314,6 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
     _toast(parent == null
         ? '“$c” ya no depende de nadie'
         : '“$c” ahora depende de “${controller.node(parent)?.title}”');
-  }
-
-  Future<void> _edgeMenu(EdgeData edge, Offset global) async {
-    final action = await showMenu<String>(
-      context: context,
-      position:
-          RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
-      items: [
-        PopupMenuItem(
-          value: 'anim',
-          child: _MenuRow(Icons.animation,
-              edge.animated ? 'Detener animación' : 'Animar flujo'),
-        ),
-        for (final c in EdgeCurve.values)
-          PopupMenuItem(
-              value: 'curve:${c.name}',
-              child: _MenuRow(Icons.timeline, 'Curva: ${c.name}')),
-        if (edge.bend != null)
-          const PopupMenuItem(
-              value: 'straighten',
-              child: _MenuRow(Icons.straighten, 'Enderezar trazado')),
-        const PopupMenuDivider(),
-        const PopupMenuItem(
-            value: 'delete',
-            child: _MenuRow(Icons.delete_outline, 'Eliminar conexión')),
-      ],
-    );
-    if (action == null) return;
-    if (action == 'delete') {
-      controller.removeEdge(edge.id);
-    } else if (action == 'straighten') {
-      controller.setEdgeBend(edge.id, null);
-    } else if (action == 'anim') {
-      controller.updateEdge(edge.id, (e) => e.copyWith(animated: !e.animated));
-    } else if (action.startsWith('curve:')) {
-      final c = EdgeCurve.values.byName(action.substring(6));
-      controller.updateEdge(edge.id, (e) => e.copyWith(curve: c));
-    }
-  }
-
-  Future<void> _canvasMenu(Offset world, Offset global) async {
-    final type = await showMenu<String>(
-      context: context,
-      position:
-          RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
-      items: [
-        for (final e in nodeTypeStyles.entries)
-          PopupMenuItem(
-              value: e.key,
-              child: _MenuRow(e.value.icon!, 'Nuevo: ${e.value.label}')),
-      ],
-    );
-    if (type != null) _addNode(type, world);
   }
 
   String _childTypeOf(String? type) => switch (type) {
@@ -472,7 +430,6 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
         config: NodeEditorConfig(
           snapToGrid: _snap,
           hierarchyAxis: scenario.hierarchyAxis,
-          showMinimap: wide,
           animations: _animate
               ? const NodeEditorAnimations()
               : NodeEditorAnimations.none,
@@ -480,10 +437,23 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
         ),
         nodeBuilder: buildNodeCard,
         onNodeDoubleTap: _rename,
-        onNodeContextMenu: _nodeMenu,
-        onEdgeContextMenu: _edgeMenu,
-        onLinkContextMenu: _linkMenu,
-        onCanvasContextMenu: _canvasMenu,
+        onContextMenu: _contextMenu,
+        selectionOverlayBuilder: _selectionToolbar,
+        // Controles y minimapa: los colocamos nosotros, con nuestro estilo.
+        overlays: [
+          Positioned(
+            left: 12,
+            bottom: 12,
+            child: CanvasControls(controller: controller),
+          ),
+          if (wide)
+            Positioned(
+              right: 12,
+              bottom: 12,
+              child: NodeEditorMinimap<Item>(
+                  controller: controller, theme: t, size: const Size(200, 136)),
+            ),
+        ],
         onConnectionDropped: _onConnectionDropped,
         onConnectionRejected: _toast,
         onParentChanged: _onParentChanged,

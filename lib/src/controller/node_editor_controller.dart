@@ -9,6 +9,7 @@ import '../model/connection.dart';
 import '../model/connector_style.dart';
 import '../model/edge.dart';
 import '../model/node.dart';
+import '../model/node_style.dart';
 import '../model/port.dart';
 import 'spatial_index.dart';
 import 'viewport.dart';
@@ -619,6 +620,52 @@ class NodeEditorController<T> extends ChangeNotifier {
       });
     });
   }
+
+  /// Cambia el aspecto de [ids] en un solo paso de deshacer.
+  ///
+  /// [style] `null` quita el estilo propio (vuelve al de su tipo). [color]
+  /// cambia el color de acento; usa [clearColor] para volver al del tipo.
+  /// Con [resize] puedes ajustar el tamaño a la nueva forma (p. ej. con
+  /// `NodeShapes.suggestedSize`); el nodo conserva su centro.
+  void setNodeStyle(
+    Iterable<String> ids,
+    NodeStyle? style, {
+    Color? color,
+    bool clearColor = false,
+    Size Function(NodeData<T> node)? resize,
+  }) {
+    transaction(() {
+      for (final id in ids) {
+        final n = _nodes[id];
+        if (n == null) continue;
+        var next = n.copyWith(
+          style: style,
+          clearStyle: style == null,
+          color: color,
+          clearColor: clearColor,
+        );
+        final size = resize?.call(n);
+        if (size != null && size != n.size) {
+          final c = rectOf(id).center;
+          next =
+              next.copyWith(position: c - size.center(Offset.zero), size: size);
+        }
+        if (next.style == n.style &&
+            next.color == n.color &&
+            next.position == n.position &&
+            next.size == n.size) {
+          continue;
+        }
+        _setNode(id, next);
+      }
+    });
+  }
+
+  /// Quita el estilo y el color propios de [ids]: vuelven al aspecto de su
+  /// tipo.
+  void resetNodeStyle(Iterable<String> ids,
+          {Size Function(NodeData<T> node)? resize}) =>
+      setNodeStyle(ids, null, clearColor: true, resize: resize);
 
   /// Asigna [parentId] como padre de [childId]. Devuelve `false` si crearía
   /// un ciclo. `null` convierte el nodo en raíz.

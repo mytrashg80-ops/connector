@@ -27,8 +27,7 @@ Widget _host(NodeEditorController<void> c,
         child: NodeEditor<void>(
           controller: c,
           theme: theme,
-          config: config ??
-              const NodeEditorConfig(showMinimap: false, showControls: false),
+          config: config ?? const NodeEditorConfig(),
         ),
       ),
     ),
@@ -153,7 +152,8 @@ void main() {
       for (var i = 0; i < 50; i++)
         _n('n$i', Offset(i * 200.0, (i % 5) * 150.0)),
     ]);
-    await tester.pumpWidget(_host(c, config: const NodeEditorConfig()));
+    await tester.pumpWidget(_host(c,
+        config: const NodeEditorConfig(showMinimap: true, showControls: true)));
     expect(find.byType(NodeEditorMinimap<void>), findsOneWidget);
     await tester.tap(find.byTooltip('Ajustar vista'));
     // El botón usa una transición de cámara.
@@ -291,8 +291,7 @@ void main() {
             child: NodeEditor<void>(
               controller: c,
               theme: theme,
-              config: const NodeEditorConfig(
-                  showMinimap: false, showControls: false),
+              config: const NodeEditorConfig(showEdgeDeleteButton: true),
               onEdgeReconnected: (_, after) => reconnected = after,
               onEdgeDisconnected: (e) => disconnected = e,
             ),
@@ -403,8 +402,7 @@ void main() {
             child: NodeEditor<void>(
               controller: c,
               theme: theme,
-              config: const NodeEditorConfig(
-                  showMinimap: false, showControls: false),
+              config: const NodeEditorConfig(showEdgeDeleteButton: true),
               onParentChanged: (child, parent) => changes.add((child, parent)),
             ),
           ),

@@ -80,6 +80,7 @@ class EditOverlayPainter<T> extends CustomPainter {
     required this.state,
     required this.theme,
     required this.edgeEditing,
+    this.deleteButton = false,
     required this.nodeResize,
     required this.labelMinScale,
     required this.canResize,
@@ -101,6 +102,9 @@ class EditOverlayPainter<T> extends CustomPainter {
   final InteractionState state;
   final NodeEditorTheme theme;
   final bool edgeEditing;
+
+  /// Pinta el botón de borrar de la conexión seleccionada.
+  final bool deleteButton;
   final bool nodeResize;
   final double labelMinScale;
   final bool Function(NodeData<T> node) canResize;
@@ -128,7 +132,7 @@ class EditOverlayPainter<T> extends CustomPainter {
     if (edgeEditing) {
       _paintSelectedEdges(canvas, s);
       _paintSelectedLinks(canvas, s);
-      _paintSingleDelete(canvas, s);
+      if (deleteButton) _paintSingleDelete(canvas, s);
     }
     if (nodeResize) _paintResize(canvas, s);
     _paintConnectorHandles(canvas, s);
@@ -373,6 +377,7 @@ class EditOverlayPainter<T> extends CustomPainter {
       !identical(old.renderer, renderer) ||
       !identical(old.state, state) ||
       old.edgeEditing != edgeEditing ||
+      old.deleteButton != deleteButton ||
       old.nodeResize != nodeResize ||
       old.labelMinScale != labelMinScale ||
       old.canResize != canResize ||

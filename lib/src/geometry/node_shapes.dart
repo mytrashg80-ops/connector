@@ -15,6 +15,31 @@ abstract final class NodeShapes {
     return Rect.fromLTWH((size.width - d) / 2, 0, d, d);
   }
 
+  /// Tamaño razonable para un nodo de [size] que pasa a tener la forma
+  /// [to] (desde [from]): el círculo necesita ser más alto que ancho para el
+  /// título, el rombo algo de aire, la píldora es baja… Devuelve [size] si
+  /// la forma no cambia.
+  static Size suggestedSize(NodeShape to, Size size, {NodeShape? from}) {
+    if (from == to) return size;
+    switch (to) {
+      case NodeShape.circle:
+        return const Size(88, 112);
+      case NodeShape.diamond:
+        return Size(math.max(size.width, 170), math.max(size.height, 110));
+      case NodeShape.pill:
+        return Size(math.max(size.width, 150), 44);
+      case NodeShape.card:
+      case NodeShape.box:
+      case NodeShape.hexagon:
+        if (from == NodeShape.circle ||
+            from == NodeShape.pill ||
+            from == NodeShape.diamond) {
+          return Size(math.max(size.width, 180), 72);
+        }
+        return size;
+    }
+  }
+
   /// Contorno de la forma dentro de [r].
   static Path path(NodeShape shape, Rect r, double radius) {
     switch (shape) {

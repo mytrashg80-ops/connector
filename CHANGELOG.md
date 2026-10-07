@@ -1,3 +1,22 @@
+## 0.7.0
+
+- **La interfaz la construye la aplicación.** El editor ya no añade controles,
+  minimapa ni el botón × de la línea seleccionada por defecto
+  (`showControls`, `showMinimap` y el nuevo `showEdgeDeleteButton` son
+  `false`); siguen disponibles como piezas opcionales.
+- `NodeEditor.onContextMenu` (`EditorContextMenuDetails`): un único callback
+  para el clic derecho / pulsación larga con el destino (`EditorTarget`:
+  `NodeTarget`, `SelectionTarget`, `EdgeTarget`, `LinkTarget`,
+  `CanvasTarget`), las posiciones y las acciones disponibles.
+- `NodeEditor.selectionOverlayBuilder` (`EditorSelectionDetails`): barra de
+  acciones propia junto a la selección, colocada y movida por el editor.
+- `EditorAction` / `EditorCommand` y `controller.actionsFor`, `actionFor`,
+  `targetForNode`: operaciones listas para ejecutar, sin texto ni icono.
+- `controller.setNodeStyle` y `resetNodeStyle` (varios nodos, un paso de
+  deshacer), `NodeShapes.suggestedSize` y el widget `NodePreview`.
+- Ejemplo: menú contextual, barra flotante de la selección, controles de la
+  cámara y diálogo de estilo construidos por la app (`editor_ui.dart`).
+
 ## 0.6.0
 
 - **Formas de nodo** (`NodeShape`): tarjeta, caja, píldora, círculo con icono

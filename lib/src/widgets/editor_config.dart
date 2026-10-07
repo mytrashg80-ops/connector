@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import '../controller/editor_actions.dart';
 import '../model/connector_style.dart';
 import '../model/node.dart';
 import '../model/port.dart';
@@ -33,8 +34,8 @@ class NodeEditorConfig {
     this.readOnly = false,
     this.showGrid = true,
     this.snapToGrid = false,
-    this.showMinimap = true,
-    this.showControls = true,
+    this.showMinimap = false,
+    this.showControls = false,
     this.minimapAlignment = Alignment.bottomRight,
     this.controlsAlignment = Alignment.bottomLeft,
     this.minimapSize = const Size(200, 136),
@@ -54,6 +55,7 @@ class NodeEditorConfig {
     this.enableNodeResize = true,
     this.minNodeSize = const Size(72, 36),
     this.enableEdgeEditing = true,
+    this.showEdgeDeleteButton = false,
     this.enableAlignmentGuides = true,
     this.alignmentSnapDistance = 6,
     this.animations = const NodeEditorAnimations(),
@@ -65,7 +67,15 @@ class NodeEditorConfig {
   final bool readOnly;
   final bool showGrid;
   final bool snapToGrid;
+
+  /// Añade el minimapa de serie ([NodeEditorMinimap]). Por defecto el editor
+  /// no añade ninguna interfaz propia: coloca tú el minimapa (o el tuyo) con
+  /// `NodeEditor.overlays`.
   final bool showMinimap;
+
+  /// Añade la barra de controles de serie ([NodeEditorControls]). Por
+  /// defecto no: construye tus propios controles con los métodos del
+  /// controlador (`viewport.zoomBy`, `fitView`, `undo`…).
   final bool showControls;
   final Alignment minimapAlignment;
   final Alignment controlsAlignment;
@@ -116,9 +126,13 @@ class NodeEditorConfig {
   final Size minNodeSize;
 
   /// Permite editar conexiones existentes: arrastrar sus extremos para
-  /// reconectarlas o soltarlas en el vacío para desconectarlas, y el botón
-  /// de borrar de la conexión seleccionada.
+  /// reconectarlas o soltarlas en el vacío para desconectarlas.
   final bool enableEdgeEditing;
+
+  /// Pinta un botón de borrar junto a la conexión (o enlace) seleccionado.
+  /// Por defecto no: usa `NodeEditor.selectionOverlayBuilder` para poner tu
+  /// propia barra de acciones.
+  final bool showEdgeDeleteButton;
 
   /// Al arrastrar o redimensionar nodos muestra guías cuando sus bordes o
   /// centros quedan alineados con los de otros nodos visibles, y los atrae
@@ -168,6 +182,7 @@ class NodeEditorConfig {
     bool? enableNodeResize,
     Size? minNodeSize,
     bool? enableEdgeEditing,
+    bool? showEdgeDeleteButton,
     bool? enableAlignmentGuides,
     double? alignmentSnapDistance,
     NodeEditorAnimations? animations,
@@ -200,6 +215,7 @@ class NodeEditorConfig {
       enableNodeResize: enableNodeResize ?? this.enableNodeResize,
       minNodeSize: minNodeSize ?? this.minNodeSize,
       enableEdgeEditing: enableEdgeEditing ?? this.enableEdgeEditing,
+      showEdgeDeleteButton: showEdgeDeleteButton ?? this.showEdgeDeleteButton,
       enableAlignmentGuides:
           enableAlignmentGuides ?? this.enableAlignmentGuides,
       alignmentSnapDistance:
@@ -443,3 +459,63 @@ class ConnectionDropDetails<T> {
   /// [ConnectorKind.hierarchy] o una conexión si es [ConnectorKind.edge]).
   final ConnectorStyle style;
 }
+
+/// Petición de menú contextual (clic derecho o pulsación larga).
+///
+/// El editor no muestra ningún menú: entrega lo que hay bajo el puntero, la
+/// posición y las [actions] que sabe ejecutar, y la aplicación construye el
+/// menú con su propio estilo (añadiendo, si quiere, opciones propias).
+@immutable
+class EditorContextMenuDetails<T> {
+  const EditorContextMenuDetails({
+    required this.target,
+    required this.globalPosition,
+    required this.localPosition,
+    required this.worldPosition,
+    required this.actions,
+  });
+
+  /// Lo que hay bajo el puntero ([NodeTarget], [SelectionTarget],
+  /// [EdgeTarget], [LinkTarget] o [CanvasTarget]).
+  final EditorTarget<T> target;
+
+  /// Posición en pantalla (para `showMenu`, un `OverlayEntry`…).
+  final Offset globalPosition;
+
+  /// Posición dentro del editor.
+  final Offset localPosition;
+
+  /// Posición en el lienzo (p. ej. para crear un nodo justo ahí).
+  final Offset worldPosition;
+
+  /// Operaciones del editor disponibles para [target].
+  final List<EditorAction> actions;
+}
+
+/// Lo que está seleccionado y dónde está en pantalla, para que la
+/// aplicación muestre su propia barra de acciones junto a ello (ver
+/// `NodeEditor.selectionOverlayBuilder`).
+@immutable
+class EditorSelectionDetails<T> {
+  const EditorSelectionDetails({
+    required this.target,
+    required this.anchor,
+    required this.actions,
+  });
+
+  /// [NodeTarget] (un nodo), [SelectionTarget] (varios), [EdgeTarget] o
+  /// [LinkTarget].
+  final EditorTarget<T> target;
+
+  /// Zona de la selección en coordenadas del editor (los nodos o el centro
+  /// de la línea).
+  final Rect anchor;
+
+  /// Operaciones del editor disponibles para [target].
+  final List<EditorAction> actions;
+}
+
+/// Construye la barra de acciones de la selección. Devuelve `null` para no
+/// mostrar nada.
+typedef SelectionOverlayBuilder<T> = Widget? Function(
+    BuildContext context, EditorSelectionDetails<T> details);

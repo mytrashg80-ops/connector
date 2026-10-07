@@ -28,16 +28,17 @@ dependencias aparte de Flutter.
 | **Puertos** | Entrada/salida/ambos, en los 4 lados, con etiqueta, tipo lógico para validar compatibilidad y máximo de conexiones |
 | **Conexiones** | Bézier, ortogonal redondeada, ortogonal, recta. Etiquetas, flechas, trazo discontinuo, flujo animado. Conexiones "flotantes" sin puertos |
 | **Crear conectores** | Cada nodo muestra tiradores **+** en sus lados (al pasar el ratón o al seleccionarlo, también en táctil). Arrastra uno hasta otro nodo para crear un enlace de jerarquía padre → hijo o una conexión de cualquier estilo (curva, ortogonal, recta, discontinua, animada, con flecha, color, grosor, etiqueta), con o sin puertos |
-| **Editar conexiones** | Conexiones y enlaces de jerarquía se seleccionan igual: resaltado al pasar el ratón, arrastrar un extremo para reconectar (o soltarlo en el vacío para desconectar), botón × en la línea seleccionada, Alt + clic en un puerto para romper sus conexiones |
+| **Editar conexiones** | Conexiones y enlaces de jerarquía se seleccionan igual: resaltado al pasar el ratón, arrastrar un extremo para reconectar (o soltarlo en el vacío para desconectar), Alt + clic en un puerto para romper sus conexiones |
 | **Trazado** | Arrastra cualquier línea para que pase por otro sitio (p. ej. para sacarla de debajo de un nodo). El punto de paso acompaña a los nodos al moverlos; llévala de vuelta a su sitio para enderezarla |
 | **Guías de alineación** | Al arrastrar o redimensionar, los bordes y centros se alinean con los de los nodos visibles y se dibujan guías. Ctrl/⌘ lo desactiva mientras se mantiene |
 | **Animaciones** | Opcionales y configurables: los nodos aparecen creciendo y desaparecen encogiéndose, se "levantan" con sombra al arrastrarlos y se asientan con un rebote al soltarlos, se deslizan al deshacer o auto-organizar, las ramas se recogen hacia su padre al plegarse, las líneas nuevas se dibujan y las borradas se desvanecen, y la cámara se desliza al ajustar la vista o hacer zoom |
 | **Tamaño** | Redimensionar arrastrando los bordes (ratón) o las esquinas del nodo seleccionado (táctil), con tamaño mínimo e imán a la rejilla |
 | **Jerarquía** | `parentId` con detección de ciclos, colapsar/expandir subárboles, arrastrar un padre mueve su subárbol, **Alt + soltar** sobre otro nodo para asignarle padre |
-| **Interacción** | Todo se ve en tiempo real mientras arrastras. Pan, zoom con rueda, pinza y trackpad, selección múltiple (Shift/Ctrl, rectángulo con Shift+arrastrar), imán a la rejilla, menús contextuales (clic derecho o pulsación larga), cursores según lo que hay debajo |
+| **Interacción** | Todo se ve en tiempo real mientras arrastras. Pan, zoom con rueda, pinza y trackpad, selección múltiple (Shift/Ctrl, rectángulo con Shift+arrastrar), imán a la rejilla, cursores según lo que hay debajo |
 | **Edición** | Deshacer/rehacer con transacciones, duplicar, borrar, atajos de teclado |
 | **Auto-organización** | `TreeLayout`, `LayeredLayout` (tipo Sugiyama), `RadialLayout`, `MindMapLayout`, `GridLayout`, con animación opcional |
-| **Extras** | Minimapa, controles de zoom, serialización JSON, tema claro/oscuro totalmente personalizable |
+| **Tu interfaz** | El editor no construye menús, diálogos ni barras: te entrega qué hay bajo el clic derecho (`onContextMenu`), qué hay seleccionado y dónde (`selectionOverlayBuilder`) y las acciones que sabe hacer (`EditorAction`). Tú pones textos, iconos y estilo |
+| **Extras** | Minimapa y controles de zoom opcionales, vista previa de nodos (`NodePreview`), serialización JSON, tema claro/oscuro totalmente personalizable |
 
 ## Instalación
 
@@ -191,6 +192,120 @@ NodeEditorTheme.light(nodeTypes: {
   título), los puertos se colocan en su borde y la vista lejana (LOD) dibuja
   cada forma.
 
+## Tu propia interfaz (menús, barras, diálogos)
+
+El paquete sólo dibuja el lienzo: nodos, líneas y los tiradores para
+editarlos. **Todo lo demás lo construye tu aplicación** con sus widgets y su
+estilo: menús contextuales, barras de acciones, diálogos, controles de zoom,
+paletas… El editor expone las herramientas para hacerlo.
+
+### Menú contextual
+
+`onContextMenu` se llama con el clic derecho (o la pulsación larga) y trae:
+
+- `target`: qué hay debajo. Es una clase sellada: `NodeTarget`,
+  `SelectionTarget` (varios nodos seleccionados), `EdgeTarget`, `LinkTarget`
+  (enlace padre → hijo) o `CanvasTarget`.
+- `globalPosition`, `localPosition` y `worldPosition`.
+- `actions`: las `EditorAction` que el editor sabe ejecutar sobre ese
+  destino (sólo las que tienen sentido en ese momento).
+
+```dart
+NodeEditor<Item>(
+  controller: controller,
+  onContextMenu: (d) async {
+    final items = <PopupMenuEntry<VoidCallback>>[
+      // Opciones de tu aplicación…
+      if (d.target case NodeTarget(:final node))
+        PopupMenuItem(value: () => editar(node), child: const Text('Editar')),
+      if (d.target case CanvasTarget(:final worldPosition))
+        PopupMenuItem(
+            value: () => crearNodo(worldPosition),
+            child: const Text('Nuevo nodo')),
+      // …y las del editor, con tus textos.
+      for (final a in d.actions)
+        PopupMenuItem(
+          value: a.call,
+          enabled: a.enabled,
+          child: Text(miTexto(a)), // según a.command / a.value / a.selected
+        ),
+    ];
+    final p = d.globalPosition;
+    final run = await showMenu(
+        context: context,
+        position: RelativeRect.fromLTRB(p.dx, p.dy, p.dx, p.dy),
+        items: items);
+    run?.call();
+  },
+)
+```
+
+Una `EditorAction` no tiene texto ni icono, sólo datos:
+
+| Campo | Qué es |
+|---|---|
+| `command` | `EditorCommand`: `duplicate`, `delete`, `deleteWithDescendants`, `collapse`, `expand`, `detachFromParent`, `lock`, `unlock`, `bringToFront`, `resetStyle`, `focus`, `deleteEdge`, `straightenEdge`, `toggleEdgeAnimation`, `setEdgeCurve`, `reverseEdge`, `straightenLink`, `unlink`, `selectAll`, `clearSelection`, `fitView`, `undo`, `redo` |
+| `value` | Dato extra (la `EdgeCurve` de `setEdgeCurve`) |
+| `enabled` | `false` si ahora no se puede (editor bloqueado, nada que deshacer…) |
+| `selected` | Estado actual (la curva actual, si la línea está animada…) |
+| `destructive` | Borra datos (para pintarla en rojo o pedir confirmación) |
+| `call()` | La ejecuta (un paso de deshacer) |
+
+También puedes pedirlas en cualquier momento, p. ej. para una barra de
+herramientas o atajos propios:
+
+```dart
+controller.actionsFor(NodeTarget(nodo));
+controller.actionFor(EdgeTarget(linea), EditorCommand.setEdgeCurve,
+    value: EdgeCurve.step)?.call();
+controller.targetForNode(nodo); // NodeTarget o SelectionTarget
+```
+
+Los callbacks por tipo (`onNodeContextMenu`, `onEdgeContextMenu`,
+`onLinkContextMenu`, `onCanvasContextMenu`) siguen existiendo; si das
+`onContextMenu`, éste los sustituye.
+
+### Barra de acciones de la selección
+
+`selectionOverlayBuilder` construye un widget tuyo junto a lo seleccionado
+(un nodo, varios, una conexión o un enlace). El editor lo coloca encima (o
+debajo si no cabe), lo mueve con la cámara y lo oculta mientras se arrastra.
+Recibe el mismo `target` y `actions`, y el `anchor` en pantalla. Devuelve
+`null` para no mostrar nada.
+
+```dart
+selectionOverlayBuilder: (context, d) => switch (d.target) {
+  NodeTarget(:final node) => MiBarra(children: [
+      MiBoton(Icons.edit, () => editar(node)),
+      for (final a in d.actions)
+        if (a.command == EditorCommand.delete)
+          MiBoton(Icons.delete, a.call),
+    ]),
+  _ => null,
+},
+```
+
+### Controles, minimapa y diálogos
+
+- El editor **no añade controles ni minimapa** por defecto. Haz los tuyos con
+  `controller.viewport.zoomBy(1.2, animate: true)`, `controller.fitView()`,
+  `undo`/`redo` (`controller.history` avisa de cambios) y
+  `controller.locked`, y colócalos con `NodeEditor.overlays`.
+  `NodeEditorMinimap` y `NodeEditorControls` siguen disponibles como piezas
+  opcionales (`showMinimap` / `showControls` o en `overlays`).
+- El botón × sobre la línea seleccionada ya no aparece por defecto
+  (`showEdgeDeleteButton: true` lo recupera).
+- Para un diálogo de estilo propio: las opciones son `NodeShape.values`,
+  `NodeBorderStyle.values` y `theme.icons`. `NodePreview` pinta un nodo igual
+  que en el editor, y `controller.setNodeStyle(ids, estilo, color:, resize:)`
+  y `resetNodeStyle(ids)` lo aplican a varios nodos en un solo paso de
+  deshacer. `NodeShapes.suggestedSize` propone un tamaño al cambiar de forma.
+- Para la creación de nodos: `onCanvasDoubleTap`, `onConnectionDropped`,
+  `NodeEditorState.globalToWorld` y `showDropPreview` (paletas arrastrables).
+
+El ejemplo (`example/lib/editor_ui.dart`) construye así su menú, su barra
+flotante y sus controles con Material 3.
+
 ## Nodos personalizados
 
 ```dart
@@ -244,7 +359,8 @@ final temaOscuro = NodeEditorTheme.dark(
 ## Configuración
 
 `NodeEditorConfig` permite: `readOnly`, `showGrid`, `snapToGrid`,
-`showMinimap`, `showControls`, `dragMovesDescendants`, `reparentMode`
+`showMinimap`, `showControls`, `showEdgeDeleteButton` (los tres `false` por
+defecto), `dragMovesDescendants`, `reparentMode`
 (`none` / `withModifier` / `always`), `wheelBehavior` (`zoom` / `pan`),
 `lodScale`, `labelMinScale`, `cullMargin`, `showHierarchyLinks`,
 `hierarchyAxis`, `enableKeyboardShortcuts`, `marqueeOnEmptyDrag`,
@@ -252,7 +368,8 @@ final temaOscuro = NodeEditorTheme.dark(
 `enableAlignmentGuides`, `alignmentSnapDistance`, `animations`,
 `connectorHandles`, `newConnector`...
 
-Callbacks del widget: `onNodeTap`, `onNodeDoubleTap`, `onNodeContextMenu`,
+Callbacks del widget: `onContextMenu`, `selectionOverlayBuilder`,
+`onNodeTap`, `onNodeDoubleTap`, `onNodeContextMenu`,
 `onEdgeTap`, `onEdgeContextMenu`, `onCanvasTap`, `onCanvasContextMenu`,
 `onConnect`, `onConnectionRejected`, `onConnectionDropped` (para crear un nodo
 ya conectado al soltar una conexión en el vacío), `onNodesMoved`,
@@ -262,7 +379,7 @@ ya conectado al soltar una conexión en el vacío), `onNodesMoved`,
 Los enlaces de jerarquía (los que dibuja `parentId`) se editan igual que las
 conexiones. Mover el extremo del padre cambia el padre del hijo; mover el del
 hijo pasa el enlace a otro nodo (`moveLinkToChild`); soltarlo en el vacío o
-pulsar × / Supr lo rompe. Cada cambio llega por `onParentChanged` (con
+pulsar Supr lo rompe. Cada cambio llega por `onParentChanged` (con
 `parentId` `null` al romperlo) y respeta `canReparent`.
 
 `AlignmentSnapper` (exportado) es el motor de las guías por si quieres usarlo

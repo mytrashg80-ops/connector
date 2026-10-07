@@ -1,6 +1,7 @@
 import 'package:connector/connector.dart';
 import 'package:flutter/material.dart';
 
+import 'node_cards.dart';
 import 'scenarios.dart';
 
 const _shapeNames = {
@@ -32,30 +33,13 @@ const _palette = <Color>[
   Color(0xFF64748B),
 ];
 
-/// Tamaño razonable al cambiar de forma (un círculo necesita ser más alto
-/// que ancho para el título, un rombo algo de aire…).
-Size sizeForShape(NodeData<Item> n, NodeShape from, NodeShape to) {
-  if (from == to) return n.size;
-  switch (to) {
-    case NodeShape.circle:
-      return const Size(88, 112);
-    case NodeShape.diamond:
-      return Size(n.size.width < 160 ? 170 : n.size.width,
-          n.size.height < 110 ? 110 : n.size.height);
-    case NodeShape.pill:
-      return Size(n.size.width < 150 ? 170 : n.size.width, 44);
-    default:
-      if (from == NodeShape.circle ||
-          from == NodeShape.pill ||
-          from == NodeShape.diamond) {
-        final s = sizeFor(n.type);
-        return s.width < 120 ? const Size(190, 72) : s;
-      }
-      return n.size;
-  }
-}
-
-/// Diálogo para cambiar forma, color, icono, relleno y borde de [ids].
+/// Diálogo de la aplicación para cambiar forma, color, icono, relleno y
+/// borde de [ids].
+///
+/// Del paquete sólo usamos herramientas: las opciones ([NodeShape.values],
+/// [NodeBorderStyle.values], `theme.icons`), la vista previa ([NodePreview])
+/// y `controller.setNodeStyle` / `resetNodeStyle`, que aplican el cambio en
+/// un solo paso de deshacer.
 Future<void> showNodeStyleDialog(
     BuildContext context,
     NodeEditorController<Item> controller,
@@ -70,22 +54,23 @@ Future<void> showNodeStyleDialog(
   var filled = resolved.filled;
   var border = resolved.borderStyle;
 
-  NodeData<Item> styled(NodeData<Item> n) {
-    final from = theme.shapeOf(n);
-    return n.copyWith(
-      style: NodeStyle(
-          shape: shape, icon: icon, filled: filled, borderStyle: border),
-      clearStyle: false,
-      color: color,
-      clearColor: color == null,
-      size: sizeForShape(n, from, shape),
-    );
-  }
+  NodeStyle style() =>
+      NodeStyle(shape: shape, icon: icon, filled: filled, borderStyle: border);
+
+  // Al cambiar de forma ajustamos el tamaño (un círculo necesita ser más alto
+  // que ancho para el título, un rombo algo de aire…).
+  Size resize(NodeData<Item> n, NodeShape to) =>
+      NodeShapes.suggestedSize(to, n.size, from: theme.shapeOf(n));
 
   final apply = await showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(builder: (context, setState) {
-      final preview = styled(first);
+      final preview = first.copyWith(
+        style: style(),
+        color: color,
+        clearColor: color == null,
+        size: resize(first, shape),
+      );
       Widget section(String title, Widget child) => Padding(
             padding: const EdgeInsets.only(top: 14),
             child: Column(
@@ -115,21 +100,11 @@ Future<void> showNodeStyleDialog(
                   color: theme.backgroundColor,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: FittedBox(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: SizedBox.fromSize(
-                      size: preview.size,
-                      child: NodeEditorScope(
-                        theme: theme,
-                        child: DefaultNodeBody(
-                          node: preview,
-                          state: const NodeViewState(),
-                          theme: theme,
-                        ),
-                      ),
-                    ),
-                  ),
+                padding: const EdgeInsets.all(20),
+                child: NodePreview<Item>(
+                  node: preview,
+                  theme: theme,
+                  nodeBuilder: buildNodeCard,
                 ),
               ),
               Flexible(
@@ -220,18 +195,9 @@ Future<void> showNodeStyleDialog(
           TextButton(
             onPressed: () {
               // Vuelve al aspecto de su tipo.
-              controller.transaction(() {
-                for (final id in ids) {
-                  controller.updateNode(
-                      id,
-                      (n) => n.copyWith(
-                            clearStyle: true,
-                            clearColor: true,
-                            size: sizeForShape(n, theme.shapeOf(n),
-                                theme.styleFor(n.type).shape ?? NodeShape.card),
-                          ));
-                }
-              });
+              controller.resetNodeStyle(ids,
+                  resize: (n) => resize(
+                      n, theme.styleFor(n.type).shape ?? NodeShape.card));
               Navigator.pop(context, false);
             },
             child: const Text('Restablecer'),
@@ -247,11 +213,13 @@ Future<void> showNodeStyleDialog(
     }),
   );
   if (apply != true) return;
-  controller.transaction(() {
-    for (final id in ids) {
-      controller.updateNode(id, styled);
-    }
-  });
+  controller.setNodeStyle(
+    ids,
+    style(),
+    color: color,
+    clearColor: color == null,
+    resize: (n) => resize(n, shape),
+  );
 }
 
 class _Swatch extends StatelessWidget {

@@ -4,6 +4,7 @@
 /// cadenas de ensamblado y distribución, inventarios y mapas mentales.
 library;
 
+export 'src/controller/editor_actions.dart';
 export 'src/controller/node_editor_controller.dart';
 export 'src/controller/spatial_index.dart';
 export 'src/controller/viewport.dart';
@@ -26,3 +27,4 @@ export 'src/widgets/default_node.dart';
 export 'src/widgets/editor_config.dart';
 export 'src/widgets/minimap.dart';
 export 'src/widgets/node_editor.dart';
+export 'src/widgets/node_preview.dart';
