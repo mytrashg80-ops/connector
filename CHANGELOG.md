@@ -1,3 +1,23 @@
+## 0.6.0
+
+- **Formas de nodo** (`NodeShape`): tarjeta, caja, píldora, círculo con icono
+  en el centro (y título debajo), rombo y hexágono.
+- **Estilo por nodo** con `NodeData.style` (`NodeStyle`): forma, icono,
+  relleno o sólo líneas, color de relleno, color/grosor/trazo del borde
+  (`NodeBorderStyle.solid`, `dashed`, `dotted`, `none`) y color del texto.
+  Se serializa a JSON y forma parte del historial.
+- `NodeTypeStyle` acepta `shape`, `filled`, `borderStyle` y `borderWidth`
+  para dar estilo a todo un tipo.
+- Iconos por clave: `NodeIcons.all` y `NodeEditorTheme.icons` (ampliable).
+- `NodeEditorTheme.resolveNodeStyle`, `shapeOf`, `anchorRect` y
+  `portLocalPosition`; `NodeShapes` (siluetas) y `NodeShapePainter`.
+- `NodeData.copyWith(clearColor:, clearStyle:)`.
+- Las líneas se anclan a la silueta, los puertos se colocan en su borde y la
+  vista lejana (LOD) dibuja cada forma.
+- Ejemplo: tipos Hito, Decisión, Proceso, Etiqueta, Marco y Nota; diálogo
+  "Forma, color e icono" en el menú del nodo (también para varios nodos);
+  escenario "Diagrama de proceso".
+
 ## 0.5.0
 
 - **Crear conectores de cualquier tipo desde la UI:** tiradores **+** en los

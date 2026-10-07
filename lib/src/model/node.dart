@@ -2,6 +2,7 @@ import 'dart:ui' show Color, Offset, Rect, Size;
 
 import 'package:flutter/foundation.dart';
 
+import 'node_style.dart';
 import 'port.dart';
 
 /// Nodo del grafo.
@@ -27,6 +28,7 @@ class NodeData<T> {
     this.locked = false,
     this.autoSize = false,
     this.color,
+    this.style,
     this.linkBend,
   });
 
@@ -68,6 +70,9 @@ class NodeData<T> {
   /// Color de acento propio. `null` usa el del tipo o el del tema.
   final Color? color;
 
+  /// Aspecto propio (forma, icono, relleno, borde…). `null` usa el del tipo.
+  final NodeStyle? style;
+
   /// Punto de paso del enlace con su padre elegido por el usuario, relativo
   /// al punto medio entre los centros de ambos nodos. `null` = automático.
   /// No forma parte del contenido: cambiarlo no reconstruye el widget.
@@ -96,6 +101,9 @@ class NodeData<T> {
     bool? locked,
     bool? autoSize,
     Color? color,
+    bool clearColor = false,
+    NodeStyle? style,
+    bool clearStyle = false,
     Offset? linkBend,
     bool clearLinkBend = false,
   }) {
@@ -112,7 +120,8 @@ class NodeData<T> {
       collapsed: collapsed ?? this.collapsed,
       locked: locked ?? this.locked,
       autoSize: autoSize ?? this.autoSize,
-      color: color ?? this.color,
+      color: clearColor ? null : (color ?? this.color),
+      style: clearStyle ? null : (style ?? this.style),
       linkBend: clearLinkBend ? null : (linkBend ?? this.linkBend),
     );
   }
@@ -132,7 +141,8 @@ class NodeData<T> {
           other.collapsed == collapsed &&
           other.locked == locked &&
           other.autoSize == autoSize &&
-          other.color == color);
+          other.color == color &&
+          other.style == style);
 
   Map<String, Object?> toJson([Object? Function(T? data)? encodeData]) => {
         'id': id,
@@ -150,6 +160,7 @@ class NodeData<T> {
         if (locked) 'locked': true,
         if (autoSize) 'autoSize': true,
         if (color != null) 'color': color!.toARGB32(),
+        if (style != null && !style!.isEmpty) 'style': style!.toJson(),
         if (linkBend != null) 'linkBend': [linkBend!.dx, linkBend!.dy],
       };
 
@@ -177,6 +188,9 @@ class NodeData<T> {
       locked: json['locked'] as bool? ?? false,
       autoSize: json['autoSize'] as bool? ?? false,
       color: json['color'] == null ? null : Color(json['color']! as int),
+      style: json['style'] is Map
+          ? NodeStyle.fromJson((json['style']! as Map).cast<String, Object?>())
+          : null,
       linkBend: _offsetFromJson(json['linkBend']),
     );
   }

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'node_cards.dart';
 import 'scenarios.dart';
+import 'style_editor.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -206,6 +207,9 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
         const PopupMenuItem(
             value: 'rename', child: _MenuRow(Icons.edit, 'Renombrar')),
         const PopupMenuItem(
+            value: 'style',
+            child: _MenuRow(Icons.palette_outlined, 'Forma, color e icono')),
+        const PopupMenuItem(
             value: 'child',
             child: _MenuRow(Icons.subdirectory_arrow_right, 'Añadir hijo')),
         const PopupMenuItem(
@@ -238,6 +242,12 @@ class _EditorPageState extends State<EditorPage> with TickerProviderStateMixin {
     switch (action) {
       case 'rename':
         await _rename(node);
+      case 'style':
+        if (!mounted) return;
+        // Si el nodo está entre los seleccionados, se aplica a todos.
+        final sel = controller.selectedNodeIds;
+        final ids = sel.contains(node.id) ? sel.toList() : [node.id];
+        await showNodeStyleDialog(context, controller, ids, _theme);
       case 'child':
         final r = controller.rectOf(node.id);
         final type = _childTypeOf(node.type);

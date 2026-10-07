@@ -5,7 +5,9 @@ import 'package:flutter/painting.dart';
 import '../controller/node_editor_controller.dart';
 import '../geometry/edge_path.dart';
 import '../geometry/node_geometry.dart';
+import '../geometry/node_shapes.dart';
 import '../model/edge.dart';
+import '../model/node_style.dart';
 import '../model/port.dart';
 import '../theme/node_editor_theme.dart';
 import 'effects.dart';
@@ -103,6 +105,14 @@ class SceneRenderer<T> {
         height: r.height * s);
   }
 
+  /// Zona del nodo en la que se anclan las líneas (en los círculos, sin el
+  /// título de debajo).
+  Rect anchorRectOf(String id) {
+    final n = controller.node(id);
+    final r = rectOf(id);
+    return n == null ? r : theme.anchorRect(n, r);
+  }
+
   /// Oculto (rama plegada) y sin animación de salida en curso.
   bool _hidden(String id) =>
       controller.isHidden(id) && !(effects?.isGhost(id) ?? false);
@@ -158,14 +168,13 @@ class SceneRenderer<T> {
     if (portId != null) {
       final port = n.port(portId);
       if (port != null) {
-        final local = NodeGeometry.portLocalPosition(n, rect.size, portId,
-            topInset: theme.nodeHeaderHeight);
+        final local = theme.portLocalPosition(n, rect.size, portId);
         return (rect.topLeft + local, port.side);
       }
     }
     // Sin puerto: el lado que mira al otro nodo (o al punto de paso).
-    final toward = viaOf(e) ?? rectOf(otherId).center;
-    return NodeGeometry.floatingAnchor(rect, toward);
+    final toward = viaOf(e) ?? anchorRectOf(otherId).center;
+    return NodeGeometry.floatingAnchor(theme.anchorRect(n, rect), toward);
   }
 
   /// Geometría (cacheada) de una conexión.
@@ -216,7 +225,7 @@ class SceneRenderer<T> {
   EdgeGeometry? linkGeometryOf(String childId, {bool straight = false}) {
     if (!hasVisibleLink(childId)) return null;
     final pid = controller.node(childId)!.parentId!;
-    return _hierarchyGeometry(childId, rectOf(pid), rectOf(childId),
+    return _hierarchyGeometry(childId, anchorRectOf(pid), anchorRectOf(childId),
         via: straight ? null : linkViaOf(childId), cache: !straight);
   }
 
@@ -224,8 +233,8 @@ class SceneRenderer<T> {
   ((Offset, PortSide), (Offset, PortSide))? linkEnds(String childId) {
     final pid = controller.node(childId)?.parentId;
     if (pid == null || controller.node(pid) == null) return null;
-    final (a, aSide, b, bSide) =
-        _linkAnchors(rectOf(pid), rectOf(childId), linkViaOf(childId));
+    final (a, aSide, b, bSide) = _linkAnchors(
+        anchorRectOf(pid), anchorRectOf(childId), linkViaOf(childId));
     return ((a, aSide), (b, bSide));
   }
 
@@ -359,8 +368,8 @@ class SceneRenderer<T> {
       if (pid == null || n.id == hiddenLinkId) continue;
       if (controller.node(pid) == null) continue;
       if (_hidden(n.id)) continue;
-      final pr = rectOf(pid);
-      final cr = rectOf(n.id);
+      final pr = anchorRectOf(pid);
+      final cr = anchorRectOf(n.id);
       final via = linkViaOf(n.id);
       var box = pr.expandToInclude(cr);
       if (via != null) {
@@ -538,6 +547,22 @@ class SceneRenderer<T> {
       if (_hidden(id)) continue;
       final n = controller.node(id)!;
       final rect = rectOf(id);
+      final selected = controller.isNodeSelected(id);
+      if (t.shapeOf(n) != NodeShape.card || n.style?.filled == false) {
+        // Otras formas: su silueta, rellena o sólo el contorno.
+        final st = t.resolveNodeStyle(n);
+        final path = NodeShapes.path(
+            st.shape,
+            NodeShapes.bodyRect(st.shape, rect.size).shift(rect.topLeft),
+            radius.x);
+        if (st.filled) {
+          _fill.color = st.fillColor;
+          canvas.drawPath(path, _fill);
+        }
+        _stroke.color = selected ? t.nodeSelectedBorderColor : st.accent;
+        canvas.drawPath(path, _stroke);
+        continue;
+      }
       final rr = RRect.fromRectAndRadius(rect, radius);
       final accent = t.accentFor(n.type, n.color);
       _fill.color = t.nodeTypes[n.type]?.backgroundColor ?? t.nodeColor;
@@ -553,9 +578,7 @@ class SceneRenderer<T> {
         ),
         _fill,
       );
-      _stroke.color = controller.isNodeSelected(id)
-          ? t.nodeSelectedBorderColor
-          : t.nodeBorderColor;
+      _stroke.color = selected ? t.nodeSelectedBorderColor : t.nodeBorderColor;
       canvas.drawRRect(rr, _stroke);
     }
   }

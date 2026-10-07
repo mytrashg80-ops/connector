@@ -24,6 +24,7 @@ dependencias aparte de Flutter.
 | | |
 |---|---|
 | **Nodos** | Cualquier widget como cuerpo (`nodeBuilder`), tarjeta por defecto, tamaño fijo o `autoSize`, bloqueo, colores por tipo |
+| **Formas y estilos** | Tarjeta, caja, píldora, círculo con icono, rombo y hexágono; rellenos o sólo líneas; borde sólido, discontinuo, punteado o sin borde; color e icono por nodo o por tipo, todo serializable a JSON |
 | **Puertos** | Entrada/salida/ambos, en los 4 lados, con etiqueta, tipo lógico para validar compatibilidad y máximo de conexiones |
 | **Conexiones** | Bézier, ortogonal redondeada, ortogonal, recta. Etiquetas, flechas, trazo discontinuo, flujo animado. Conexiones "flotantes" sin puertos |
 | **Crear conectores** | Cada nodo muestra tiradores **+** en sus lados (al pasar el ratón o al seleccionarlo, también en táctil). Arrastra uno hasta otro nodo para crear un enlace de jerarquía padre → hijo o una conexión de cualquier estilo (curva, ortogonal, recta, discontinua, animada, con flecha, color, grosor, etiqueta), con o sin puertos |
@@ -142,6 +143,53 @@ El controlador es un `ChangeNotifier`, y además expone notificadores de grano
 fino: `geometry`, `structure`, `edgesSignal`, `selection` y `history`. Escucha
 sólo el que necesites; por ejemplo, una barra de estado que escuche
 `structure` no se reconstruye mientras arrastras nodos.
+
+## Formas, colores e iconos
+
+Cada nodo puede tener su propio aspecto con `NodeData.style` (y su color con
+`NodeData.color`); lo que no indique lo toma de su tipo (`NodeTypeStyle`) y
+después del tema.
+
+```dart
+NodeData(
+  id: 'hito',
+  position: Offset.zero,
+  size: const Size(88, 112),      // más alto que ancho: título bajo el círculo
+  title: 'Entrega',
+  color: Colors.teal,             // acento: icono y borde de "sólo líneas"
+  style: const NodeStyle(
+    shape: NodeShape.circle,      // card, box, pill, circle, diamond, hexagon
+    icon: 'flag',                 // clave de NodeEditorTheme.icons
+    filled: false,                // sólo líneas
+    borderStyle: NodeBorderStyle.dashed, // solid, dashed, dotted, none
+    // fillColor, borderColor, borderWidth, textColor…
+  ),
+)
+
+// O para todo un tipo:
+NodeEditorTheme.light(nodeTypes: {
+  'nota': NodeTypeStyle(
+      icon: Icons.sticky_note_2_outlined,
+      color: Colors.amber,
+      shape: NodeShape.box,
+      filled: false,
+      borderStyle: NodeBorderStyle.dashed),
+})
+```
+
+- Para cambiar el estilo desde la UI basta con `controller.updateNode(id,
+  (n) => n.copyWith(style: ..., color: ...))`. Se puede deshacer y se guarda
+  en el JSON. `clearStyle: true` / `clearColor: true` vuelven al del tipo.
+  El ejemplo trae un diálogo completo (`example/lib/style_editor.dart`).
+- Los iconos se guardan como texto (`'flag'`, `'truck'`, `'check'`…) para
+  que el JSON sea portable. `NodeIcons.all` trae unos 40; añade los tuyos con
+  `theme.copyWith(icons: {...NodeIcons.all, 'mio': Icons.abc})`.
+- `theme.resolveNodeStyle(node)` da el aspecto final (útil en tu propio
+  `nodeBuilder`), y `NodeShapePainter` pinta cualquier silueta con su relleno
+  y borde.
+- Las líneas se anclan a la silueta (en el círculo, al círculo y no al
+  título), los puertos se colocan en su borde y la vista lejana (LOD) dibuja
+  cada forma.
 
 ## Nodos personalizados
 

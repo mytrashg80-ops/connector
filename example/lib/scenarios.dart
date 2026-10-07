@@ -52,6 +52,41 @@ const Map<String, NodeTypeStyle> nodeTypeStyles = {
       color: Color(0xFF3B82F6)),
   'idea': NodeTypeStyle(
       label: 'Idea', icon: Icons.lightbulb_outline, color: Color(0xFFEAB308)),
+  // Formas: cada tipo trae su forma y borde por defecto, y cada nodo puede
+  // cambiarlos (y el color y el icono) con `NodeData.style`.
+  'milestone': NodeTypeStyle(
+      label: 'Hito',
+      icon: Icons.flag_outlined,
+      color: Color(0xFF14B8A6),
+      shape: NodeShape.circle),
+  'decision': NodeTypeStyle(
+      label: 'Decisión',
+      icon: Icons.help_outline,
+      color: Color(0xFFF59E0B),
+      shape: NodeShape.diamond),
+  'process': NodeTypeStyle(
+      label: 'Proceso',
+      icon: Icons.sync,
+      color: Color(0xFF6366F1),
+      shape: NodeShape.hexagon),
+  'tag': NodeTypeStyle(
+      label: 'Etiqueta',
+      icon: Icons.label_outline,
+      color: Color(0xFFEC4899),
+      shape: NodeShape.pill),
+  'frame': NodeTypeStyle(
+      label: 'Marco',
+      icon: Icons.crop_square,
+      color: Color(0xFF0EA5E9),
+      shape: NodeShape.box,
+      filled: false),
+  'note': NodeTypeStyle(
+      label: 'Nota',
+      icon: Icons.sticky_note_2_outlined,
+      color: Color(0xFFEAB308),
+      shape: NodeShape.box,
+      filled: false,
+      borderStyle: NodeBorderStyle.dashed),
 };
 
 /// Puertos por defecto según el tipo.
@@ -84,6 +119,12 @@ List<NodePort> portsFor(String type) => switch (type) {
 Size sizeFor(String type) => switch (type) {
       'employee' => const Size(220, 72),
       'idea' => const Size(150, 44),
+      'milestone' => const Size(88, 112),
+      'decision' => const Size(170, 110),
+      'process' => const Size(190, 72),
+      'tag' => const Size(170, 44),
+      'frame' => const Size(200, 72),
+      'note' => const Size(210, 72),
       'product' => const Size(220, 116),
       'station' => const Size(220, 120),
       'company' ||
@@ -181,6 +222,13 @@ final scenarios = <Scenario>[
     build: _mindMap,
     layout: const MindMapLayout(),
     hierarchyAxis: Axis.horizontal,
+  ),
+  Scenario(
+    name: 'Diagrama de proceso',
+    icon: Icons.schema_outlined,
+    build: _process,
+    layout: const _PresetLayout(_processPositions),
+    curve: EdgeCurve.smoothStep,
   ),
   Scenario(
     name: 'Prueba de estrés (3000)',
@@ -416,4 +464,71 @@ final scenarios = <Scenario>[
     edges.add(EdgeData(id: 'se$i', sourceNodeId: 's$j', targetNodeId: 's$i'));
   }
   return (nodes, edges);
+}
+
+(List<NodeData<Item>>, List<EdgeData>) _process() {
+  final nodes = <NodeData<Item>>[
+    makeNode('start', 'milestone', 'Pedido recibido',
+        color: const Color(0xFF22C55E)),
+    makeNode('val', 'process', 'Validar pedido', subtitle: 'Pago y datos'),
+    makeNode('stock', 'decision', '¿Hay stock?'),
+    makeNode('prov', 'frame', 'Pedir a proveedor', subtitle: '3 a 5 días'),
+    makeNode('prep', 'warehouse', 'Preparar envío',
+        subtitle: 'Almacén central', withPorts: false),
+    makeNode('ruta', 'tag', 'En ruta'),
+    makeNode('end', 'milestone', 'Entregado', color: const Color(0xFFEF4444)),
+    makeNode('nota', 'note', 'Revisar caducidad antes de enviar'),
+  ];
+  // Iconos propios por nodo (claves de `NodeIcons.all`).
+  nodes[5] = nodes[5].copyWith(style: const NodeStyle(icon: 'truck'));
+  nodes[0] = nodes[0].copyWith(style: const NodeStyle(icon: 'play'));
+  nodes[6] = nodes[6].copyWith(style: const NodeStyle(icon: 'check'));
+  var k = 0;
+  EdgeData e(String s, String t,
+          {String? label, bool dashed = false, bool arrow = true}) =>
+      EdgeData(
+          id: 'f${k++}',
+          sourceNodeId: s,
+          targetNodeId: t,
+          label: label,
+          dashed: dashed,
+          arrow: arrow);
+  return (
+    nodes,
+    [
+      e('start', 'val'),
+      e('val', 'stock'),
+      e('stock', 'prep', label: 'Sí'),
+      e('stock', 'prov', label: 'No'),
+      e('prov', 'prep'),
+      e('prep', 'ruta'),
+      e('ruta', 'end'),
+      e('nota', 'ruta', dashed: true, arrow: false),
+    ],
+  );
+}
+
+/// Posiciones fijas del diagrama de proceso (con ramas arriba y abajo).
+const _processPositions = <String, Offset>{
+  'start': Offset(0, 0),
+  'val': Offset(150, 8),
+  'stock': Offset(410, -11),
+  'prep': Offset(680, -4),
+  'ruta': Offset(950, 22),
+  'end': Offset(1190, 0),
+  'prov': Offset(395, 180),
+  'nota': Offset(930, 170),
+};
+
+/// Layout que coloca los nodos conocidos en posiciones dadas y deja el resto
+/// donde están.
+class _PresetLayout extends GraphLayout {
+  const _PresetLayout(this.positions);
+
+  final Map<String, Offset> positions;
+
+  @override
+  Map<String, Offset> compute(LayoutInput input) => {
+        for (final n in input.nodes) n.id: positions[n.id] ?? n.position,
+      };
 }

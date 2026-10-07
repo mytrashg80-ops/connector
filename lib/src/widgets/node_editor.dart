@@ -738,9 +738,7 @@ class NodeEditorState<T> extends State<NodeEditor<T>>
       final rect = _c.rectOf(id);
       final z = _c.zOf(id);
       for (final p in n.ports) {
-        final pos = rect.topLeft +
-            NodeGeometry.portLocalPosition(n, rect.size, p.id,
-                topInset: _theme.nodeHeaderHeight);
+        final pos = rect.topLeft + _theme.portLocalPosition(n, rect.size, p.id);
         final d = (pos - world).distance;
         if (d <= bestD + 0.001 && (d < bestD || z > bestZ)) {
           bestD = d;

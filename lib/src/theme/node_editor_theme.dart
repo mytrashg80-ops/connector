@@ -1,8 +1,13 @@
+import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
+import '../geometry/node_shapes.dart';
 import '../model/edge.dart';
+import '../model/node.dart';
+import '../model/node_style.dart';
+import 'node_icons.dart';
 
 /// Estilo de la rejilla de fondo.
 enum GridStyle { dots, lines, none }
@@ -18,6 +23,10 @@ class NodeTypeStyle {
     this.headerColor,
     this.borderColor,
     this.titleColor,
+    this.shape,
+    this.filled,
+    this.borderStyle,
+    this.borderWidth,
   });
 
   /// Texto pequeño de la cabecera (p. ej. "Empleado"). `null` = tipo.
@@ -30,6 +39,45 @@ class NodeTypeStyle {
   final Color? headerColor;
   final Color? borderColor;
   final Color? titleColor;
+
+  /// Forma por defecto de los nodos de este tipo.
+  final NodeShape? shape;
+
+  /// `false` = sólo líneas (sin relleno).
+  final bool? filled;
+  final NodeBorderStyle? borderStyle;
+  final double? borderWidth;
+}
+
+/// Aspecto final de un nodo, combinando `NodeData.style`, `NodeData.color`,
+/// su `NodeTypeStyle` y el tema (ver [NodeEditorTheme.resolveNodeStyle]).
+@immutable
+class ResolvedNodeStyle {
+  const ResolvedNodeStyle({
+    required this.shape,
+    required this.icon,
+    required this.accent,
+    required this.filled,
+    required this.fillColor,
+    required this.borderColor,
+    required this.borderWidth,
+    required this.borderStyle,
+    required this.textColor,
+    required this.radius,
+  });
+
+  final NodeShape shape;
+  final IconData? icon;
+  final Color accent;
+  final bool filled;
+
+  /// Transparente si no está relleno.
+  final Color fillColor;
+  final Color borderColor;
+  final double borderWidth;
+  final NodeBorderStyle borderStyle;
+  final Color textColor;
+  final double radius;
 }
 
 /// Tema completo del editor. Todos los colores y medidas son configurables.
@@ -101,6 +149,7 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
     required this.badgeColor,
     required this.badgeTextStyle,
     this.nodeTypes = const {},
+    this.icons = NodeIcons.all,
   });
 
   final Brightness brightness;
@@ -190,8 +239,64 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
   /// Estilos por tipo de nodo.
   final Map<String, NodeTypeStyle> nodeTypes;
 
+  /// Iconos que se pueden usar por clave en `NodeStyle.icon`.
+  final Map<String, IconData> icons;
+
   NodeTypeStyle styleFor(String type) =>
       nodeTypes[type] ?? const NodeTypeStyle();
+
+  /// Forma de [node] (barato: no resuelve el resto del estilo).
+  NodeShape shapeOf(NodeData<Object?> node) =>
+      node.style?.shape ?? nodeTypes[node.type]?.shape ?? NodeShape.card;
+
+  /// Posición local del puerto [portId] de [node] con tamaño [size],
+  /// teniendo en cuenta su forma y la cabecera de las tarjetas.
+  Offset portLocalPosition(NodeData<Object?> node, Size size, String portId) =>
+      NodeShapes.portLocalPosition(
+          node, shapeOf(node), size, portId, nodeHeaderHeight);
+
+  /// Zona del nodo en la que se anclan las líneas (en el círculo, el círculo
+  /// sin el título de debajo). [rect] es el rectángulo del nodo.
+  Rect anchorRect(NodeData<Object?> node, Rect rect) {
+    final shape = shapeOf(node);
+    if (shape != NodeShape.circle) return rect;
+    return NodeShapes.bodyRect(shape, rect.size).shift(rect.topLeft);
+  }
+
+  /// Icono de una clave de [icons] (`null` si no existe).
+  IconData? iconFor(String? key) => key == null ? null : icons[key];
+
+  /// Aspecto final de [node]: su `style` y `color`, después su tipo y por
+  /// último el tema.
+  ResolvedNodeStyle resolveNodeStyle(NodeData<Object?> node) {
+    final ts = styleFor(node.type);
+    final ns = node.style;
+    final accent = node.color ?? ts.color ?? accentColor;
+    final shape = ns?.shape ?? ts.shape ?? NodeShape.card;
+    final filled = ns?.filled ?? ts.filled ?? true;
+    final borderStyle =
+        ns?.borderStyle ?? ts.borderStyle ?? NodeBorderStyle.solid;
+    // Sin relleno, el borde lleva el color del nodo para que se distinga.
+    final border = ns?.borderColor ??
+        ts.borderColor ??
+        (filled ? nodeBorderColor : accent);
+    return ResolvedNodeStyle(
+      shape: shape,
+      icon: iconFor(ns?.icon) ?? ts.icon,
+      accent: accent,
+      filled: filled,
+      fillColor: filled
+          ? (ns?.fillColor ?? ts.backgroundColor ?? nodeColor)
+          : const Color(0x00000000),
+      borderColor: border,
+      borderWidth: ns?.borderWidth ??
+          ts.borderWidth ??
+          (filled ? nodeBorderWidth : math.max(1.5, nodeBorderWidth)),
+      borderStyle: borderStyle,
+      textColor: ns?.textColor ?? ts.titleColor ?? nodeTitleStyle.color!,
+      radius: nodeRadius,
+    );
+  }
 
   /// Color de acento efectivo de un nodo.
   Color accentFor(String type, [Color? override]) =>
@@ -422,6 +527,7 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
     Color? badgeColor,
     TextStyle? badgeTextStyle,
     Map<String, NodeTypeStyle>? nodeTypes,
+    Map<String, IconData>? icons,
   }) {
     return NodeEditorTheme(
       brightness: brightness ?? this.brightness,
@@ -490,6 +596,7 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
       badgeColor: badgeColor ?? this.badgeColor,
       badgeTextStyle: badgeTextStyle ?? this.badgeTextStyle,
       nodeTypes: nodeTypes ?? this.nodeTypes,
+      icons: icons ?? this.icons,
     );
   }
 
@@ -569,6 +676,7 @@ class NodeEditorTheme extends ThemeExtension<NodeEditorTheme> {
       badgeColor: c(badgeColor, other.badgeColor),
       badgeTextStyle: s(badgeTextStyle, other.badgeTextStyle),
       nodeTypes: pick ? nodeTypes : other.nodeTypes,
+      icons: pick ? icons : other.icons,
     );
   }
 }

@@ -7,6 +7,13 @@ import 'scenarios.dart';
 /// tarjeta por defecto (devolviendo `null`) para el resto.
 Widget? buildNodeCard(
     BuildContext context, NodeData<Item> node, NodeViewState state) {
+  // Con otra forma o un estilo propio, la tarjeta por defecto (que entiende
+  // todas las formas, bordes y rellenos).
+  final custom = node.style != null && !node.style!.isEmpty;
+  if (NodeEditorScope.themeOf(context).shapeOf(node) != NodeShape.card ||
+      (custom && node.type != 'product')) {
+    return null;
+  }
   switch (node.type) {
     case 'employee':
       return _EmployeeCard(node: node, state: state);
